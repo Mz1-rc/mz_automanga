@@ -21,7 +21,7 @@
 - 已实现：嵌套 `AgentSession` 单飞运行器、`save_artifact` 白名单与快照、hash 缓存/续跑、Agnes 流式下载与重试、只读 Web（网格 + 单页，token/0.0.0.0）。
 - 预留（未实现）：视觉 QA（`qa.vision` 目前只记录，不调用视觉模型）、TUI 内真图预览、PDF 导出、Web 写操作。
 - 实测：真实模型跑通“剧本 → 分析 → 澄清 → bible → 角色 → 3 页 15 格分镜 → 15 格 lettering 提示词”；用 mock Agnes 跑通出图、QA、CBZ 与 Web（15/15 done）。
-- 测试：25 个用例通过（状态/锁、工件与 schema、lettering 校验、Agnes 重试与流式上限、Web 路由/鉴权/SSE/Range、CBZ、完整流水线与缓存跳过）。
+- 测试：31 个用例通过（状态/锁、工件与 schema、lettering 校验、Agnes 重试与流式上限、Web 路由/鉴权/SSE/Range、CBZ、完整流水线与缓存跳过、剧本文件/目录读取）。
 
 ### v0.2（已确认）
 
@@ -36,7 +36,7 @@
 
 ## 0. 摘要
 
-`mz_automanga` 是一个 pi 插件（Pi Package）。用户给一份剧本（文件或直接粘贴），插件按固定顺序驱动一组专职子 agent，依次产出剧本拆解、角色设定、分镜、逐格提示词，再由主进程代码调用 Agnes 图像 API 逐格出图，最后通过内置 Web 服务预览与导出。
+`mz_automanga` 是一个 pi 插件（Pi Package）。用户给一个剧本文件或一个剧本目录，插件按固定顺序驱动一组专职子 agent，依次产出剧本拆解、角色设定、分镜、逐格提示词，再由主进程代码调用 Agnes 图像 API 逐格出图，最后通过内置 Web 服务预览与导出。
 
 四条核心原则：
 
@@ -324,6 +324,7 @@ mz_automanga/
 │   ├── app.ts                   # TeamApp：单飞后台任务、项目切换
 │   ├── config.ts                # 全局/项目配置合并、角色模型解析、画风预设
 │   ├── keys.ts                  # Agnes Key 解析与权限校验
+│   ├── script-input.ts          # 剧本文件/目录读取与合并
 │   ├── paths.ts                 # slug、原子写、sha256、resolveWithin、文件工具
 │   ├── types.ts                 # 共享类型（不 import pi，便于纯 Node 测试）
 │   ├── state.ts                 # ProjectStore：state.json、阶段迁移、闸门、runs、锁
@@ -404,7 +405,8 @@ mz_automanga/
     ├── state.json                # 阶段、闸门、运行记录、统计、错误
     ├── .lock                     # pid + 时间戳
     ├── source/
-    │   ├── script.md             # 用户原始剧本
+    │   ├── script.md             # 用户原始剧本（目录输入已合并）
+    │   ├── inputs.json           # 原始输入路径与文件清单
     │   ├── analysis.json         # 剧本分析（形态、场景、问题、假设）
     │   ├── clarifications.md     # 用户回答记录
     │   └── scenes.json           # 结构化场景（analysis 的派生，便于阅读）
@@ -745,7 +747,7 @@ idle | intake | script_analysis | script_gate | design | cast | cast_gate
 
 | 顺序 | 阶段 | 执行者 | 输入 | 输出 | 校验 |
 |---|---|---|---|---|---|
-| 0 | `ingest` | 代码 | 剧本文件/文本 | `source/script.md` | 非空、hash |
+| 0 | `ingest` | 代码 | 剧本文件或目录 | `source/script.md`（目录递归合并，带文件名分隔） | 非空、hash、文件清单 |
 | 1 | `script_analysis` | `script_analyst` | script | `analysis.json`、`scenes.json` | TypeBox；scenes ≥1；issue 必须有 options/assumption |
 | 2 | `script_gate` | 宿主 UI | analysis | `clarifications.md` | 有 blocker/major 才进入 |
 | 3 | `design` | `director` | script + analysis + clarifications + style | `bible.json` | cast ≥1；stylePrompt 含 lockedTokens |
@@ -815,8 +817,8 @@ for each issue:
 
 `/manga init` 的顺序：
 
-1. 书名（可空，取剧本标题或让 analyst 建议）。
-2. 剧本：`--script <path>`，否则 `ctx.ui.editor("粘贴剧本…")`。
+1. 剧本路径：`--script <文件|目录>`；交互模式下用 `ctx.ui.input` 询问路径。目录递归读取文本文件并按自然顺序合并。
+2. 书名（可空；目录输入默认取目录名，否则取剧本首行）。
 3. **画风选择**（`ctx.ui.select`）：
 
 | 选项 | preset | 默认比例 | stylePrompt 骨架 |
@@ -1222,7 +1224,7 @@ export async function runRole(options: RoleRunOptions): Promise<RoleRunResult> {
 
 | 命令 | 作用 |
 |---|---|
-| `/manga init [--script <path>] [--title <t>] [--style <preset>]` | 新建项目：书名 → 剧本 → 画风选择 |
+| `/manga init [--script <文件\|目录>] [--title <t>] [--style <preset>]` | 新建项目：读取剧本 → 书名 → 画风选择 |
 | `/manga next` | 后台推进下一阶段（立即返回） |
 | `/manga step` | 后台只执行下一个角色或代码阶段 |
 | `/manga run <role>` | 后台运行当前阶段对应的角色 |
@@ -1435,6 +1437,8 @@ no watermark, no signature, no text other than the specified lettering
 | 测试 | 内容 |
 |---|---|
 | `state.test.ts` | 阶段迁移、闸门记录、中断 run 标记、锁、统计 |
+| `script-input.test.ts` | 单文件、目录递归自然排序、隐藏/非文本文件跳过、空目录与大小上限 |
+| `init-dir.test.ts` | 目录输入创建项目、标题取目录名、`source/inputs.json` 清单 |
 | `artifacts.test.ts` | 白名单、禁止目标、JSON 校验、原子写、快照；analysis/bible/page schema；lettering 原文/字数/气泡 |
 | `agnes.test.ts` | payload 结构、URL/b64 两条路径、429 退避、401/400 中止、超时、下载字节上限、流式写入 |
 | `web.test.ts` | 路由、SSE 首帧、token 401、路径穿越、只读 405、媒体 Range |
@@ -1493,6 +1497,7 @@ no watermark, no signature, no text other than the specified lettering
 | 剧本澄清 | 优先逐条回答；可“按假设继续”；答案写入 `clarifications.md` |
 | 画风 | `init` 时选择；默认 `manga-bw`、`3:4` |
 | 页/格 | 每页 3–6 格；每格 ≤2 个气泡、每条 ≤14 汉字 |
+| 剧本输入 | `--script <文件|目录>`；目录递归读取 `.md/.markdown/.txt/.text`，按自然顺序合并；不再接受粘贴/命令行正文 |
 | 工作区 | `<cwd>/.automanga/` |
 | 模型 | 跟随宿主当前模型；可用 `/manga models` 逐角色覆盖 |
 | 出图 | 1K 草稿，`--final` 为 2K；串行；URL 输出 + 流式下载 |
@@ -1662,7 +1667,7 @@ pi -e /root/mz_automanga
 cd /root/mz_automanga && pi install ./
 
 # 之后
-/manga init --script ./my-script.md
+/manga init --script ./my-script.md      # 或 --script ./chapters/
 # 选择画风 → 剧本分析 → 如有关键问题会逐条询问
 /manga next
 /manga web --host 0.0.0.0

@@ -1,11 +1,12 @@
-import { copyFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { copyFileSync, existsSync, readdirSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { AgnesClient } from "./agnes.ts";
 import { composeStylePrompt, makeStyle, STYLE_PRESETS, type MangaConfig } from "./config.ts";
 import { resolveAgnesKey, maskKey, saveAgnesKey } from "./keys.ts";
-import { ensureDir, listDirs, resolveWithin } from "./paths.ts";
+import { ensureDir, listDirs, resolveWithin, writeJsonAtomic } from "./paths.ts";
 import { MangaPipeline, gateIdForPhase, isRole, roleForPhase, roleLabel, pipelineSummary, type PipelineUi } from "./pipeline.ts";
 import { listProjects, ProjectStore } from "./state.ts";
+import { readScriptInput } from "./script-input.ts";
 import type { RoleId, StylePreset, StyleSelection } from "./types.ts";
 import { updateStatus, notify, phaseLabel } from "./ui.ts";
 import { startWebServer, type WebServerHandle } from "./web/server.ts";
@@ -129,27 +130,31 @@ function presetFromLabel(label: string): StylePreset {
 
 export interface InitInput {
 	title?: string;
+	/** A single script file or a directory of text files. */
 	scriptPath?: string;
-	script?: string;
 	style?: string;
 	customPrompt?: string;
 	ratio?: StyleSelection["ratio"];
 }
 
 export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput): Promise<ProjectStore> {
-	let script = input.script?.trim() ?? "";
-	if (!script && input.scriptPath) {
-		// 剧本路径来自用户，允许绝对路径；相对路径按会话工作目录解析。
-		const abs = isAbsolute(input.scriptPath) ? input.scriptPath : resolve(ctx.cwd, input.scriptPath);
-		if (!existsSync(abs)) throw new Error(`找不到剧本文件: ${input.scriptPath}`);
-		script = readFileSync(abs, "utf8");
+	let scriptPath = input.scriptPath?.trim() ?? "";
+	if (!scriptPath && ctx.hasUI) {
+		scriptPath =
+			(await ctx.ui.input("剧本文件或目录路径", "./script.md 或 ./chapters/"))?.trim() ?? "";
+		if (!scriptPath) throw new Error("已取消创建");
 	}
-	if (!script && ctx.hasUI) {
-		script = (await ctx.ui.editor("粘贴剧本（小说体、剧本体、大纲或一句梗概都可以）", "")) ?? "";
-	}
-	if (!script.trim()) throw new Error("未提供剧本。使用 --script <path> 或在 TUI 中粘贴。");
+	if (!scriptPath) throw new Error("请提供剧本文件或目录：/manga init --script <文件|目录>");
+
+	// 剧本路径来自用户，允许绝对路径；相对路径按会话工作目录解析。
+	const absPath = isAbsolute(scriptPath) ? scriptPath : resolve(ctx.cwd, scriptPath);
+	const scriptInput = readScriptInput(absPath);
+	const script = scriptInput.text;
 
 	let title = input.title?.trim();
+	if (!title && scriptInput.fromDirectory) {
+		title = basename(absPath);
+	}
 	if (!title && ctx.hasUI) {
 		title = (await ctx.ui.input("书名（可留空，自动从剧本取名）", ""))?.trim();
 	}
@@ -186,7 +191,16 @@ export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput)
 	}
 
 	const { store } = app.create(ctx.cwd, { title, style, script });
-	notify(ctx as never, `已创建《${store.project.title}》（${store.project.style.label}，${store.project.style.ratio}）。运行 /manga next 开始剧本分析。`, "info");
+	writeJsonAtomic(join(store.root, "source", "inputs.json"), {
+		inputPath: absPath,
+		fromDirectory: scriptInput.fromDirectory,
+		files: scriptInput.files,
+	});
+	notify(
+		ctx as never,
+		`已创建《${store.project.title}》（${store.project.style.label}，${store.project.style.ratio}，${scriptInput.files.length} 个输入文件）。运行 /manga next 开始剧本分析。`,
+		"info",
+	);
 	updateStatus(ctx as never, store);
 	return store;
 }

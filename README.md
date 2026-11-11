@@ -17,8 +17,9 @@ cd /root/mz_automanga && pi install ./
 ## 快速开始
 
 ```text
-/manga init --script ./script.md
-# 或交互式：/manga init   → 输入书名 → 粘贴剧本 → 选择画风/比例
+/manga init --script ./script.md        # 单个文件
+/manga init --script ./chapters/        # 目录：递归合并 .md/.markdown/.txt/.text
+# 或交互式：/manga init   → 输入剧本路径 → 书名 → 选择画风/比例
 
 /manga key            # 第一次出图前设置 Agnes API Key
 /manga next           # 推进：剧本分析
@@ -51,7 +52,7 @@ init
 
 | 命令 | 作用 |
 |---|---|
-| `/manga init [--script <path>] [--title <书名>] [--style <preset>]` | 新建项目；无参数时进入交互 |
+| `/manga init [--script <文件\|目录>] [--title <书名>] [--style <preset>]` | 新建项目；无参数时进入交互 |
 | `/manga status` | 阶段、页/格、闸门、Web 地址 |
 | `/manga next` / `/manga step` | 后台推进下一阶段 |
 | `/manga run-all` | 后台跑完剩余流程 |
@@ -85,7 +86,8 @@ init
 ```
 project.json              标题、画风、比例、尺寸、闸门
 state.json                阶段、闸门、运行记录、统计
-source/script.md          用户剧本
+source/script.md          用户剧本（目录输入已合并，带 `# ===== 文件 =====` 分隔）
+source/inputs.json        原始输入路径、是否目录、文件清单
 source/analysis.json      剧本形态、场景、问题、假设
 source/clarifications.md  用户对问题的回答
 bible.json                世界观、画风锁定、角色卡

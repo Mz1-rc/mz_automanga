@@ -85,8 +85,7 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 		parameters: Type.Object({
 			action: StringEnum(ACTIONS),
 			title: Type.Optional(Type.String({ description: "init 时的书名" })),
-			script: Type.Optional(Type.String({ description: "init 时的剧本正文" })),
-			script_path: Type.Optional(Type.String({ description: "init 时的剧本文件路径" })),
+			script_path: Type.Optional(Type.String({ description: "init 时的剧本文件或目录路径（目录会递归合并 .md/.txt）" })),
 			style: Type.Optional(
 				StringEnum(["manga-bw", "manhua-color", "webtoon", "custom"], { description: "画风预设" }),
 			),
@@ -111,12 +110,11 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 				case "help":
 					return text(HELP);
 				case "init": {
-					if (!params.script && !params.script_path && !ctx.hasUI) {
-						throw new Error("init 需要 script 或 script_path（非交互模式）");
+					if (!params.script_path && !ctx.hasUI) {
+						throw new Error("init 需要 script_path（文件或目录）");
 					}
 					const store = await actionInit(actionCtx, app, {
 						title: params.title,
-						script: params.script,
 						scriptPath: params.script_path,
 						style: params.style,
 					});
