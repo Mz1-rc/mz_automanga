@@ -1,0 +1,1022 @@
+import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { AgnesClient, AgnesError } from "./agnes.ts";
+import { validatePage, validateRefImages, validateRoleOutputs, roleTargets } from "./artifacts.ts";
+import { composeStylePrompt, type MangaConfig } from "./config.ts";
+import { resolveAgnesKey } from "./keys.ts";
+import { generateCharacterImages, generatePanelImages, regeneratePanel } from "./images.ts";
+import { readJson, readText, resolveWithin, writeAtomic, writeJsonAtomic, ensureDir, fileExists, nowIso } from "./paths.ts";
+import { buildSystemPrompt, buildTaskPrompt } from "./prompts.ts";
+import { recordAssumptions, runReviewGate, runScriptGate as runScriptGateUi, questionsNeedingUser, gatePolicy } from "./gates.ts";
+import type { GateUi } from "./gates.ts";
+import type { ProjectStore } from "./state.ts";
+import type {
+	Bible,
+	GateId,
+	MangaPage,
+	MangaProject,
+	Phase,
+	ProgressUpdate,
+	QaReport,
+	RoleId,
+	RoleRunOptions,
+	RoleRunResult,
+	RunUsage,
+	ScriptAnalysis,
+} from "./types.ts";
+import { ROLE_IDS } from "./types.ts";
+
+export type RoleRunner = (options: RoleRunOptions) => Promise<RoleRunResult>;
+
+export interface PipelineUi extends GateUi {
+	updateStatus(store: ProjectStore, progress?: string, activeUsage?: RunUsage): void;
+}
+
+export interface PipelineOptions {
+	store: ProjectStore;
+	config: MangaConfig;
+	ui: PipelineUi;
+	agentDir: string;
+	runner?: RoleRunner;
+	client?: AgnesClient;
+	signal?: AbortSignal;
+	/** Resolve a configured model id, or return the host session model. */
+	resolveModel?: (modelId?: string) => unknown;
+}
+
+async function defaultRunner(options: RoleRunOptions): Promise<RoleRunResult> {
+	const { runRole } = await import("./runner.ts");
+	return runRole(options);
+}
+
+function pageIdOf(index: number): string {
+	return `page-${String(index).padStart(3, "0")}`;
+}
+
+function panelKey(pageId: string, panelId: string): string {
+	return `${pageId}/${panelId}`;
+}
+
+function extractPanelKeys(issues: string[]): string[] {
+	const keys = new Set<string>();
+	for (const issue of issues) {
+		const match = /(page-\d{3})\/(panel-\d{2})/.exec(issue);
+		if (match) keys.add(`${match[1]}/${match[2]}`);
+	}
+	return [...keys];
+}
+
+function emptyUsage(): RunUsage {
+	return { input: 0, output: 0, total: 0, cost: 0 };
+}
+
+function addUsage(total: RunUsage, usage: RunUsage | undefined): void {
+	if (!usage) return;
+	total.input += usage.input;
+	total.output += usage.output;
+	total.total = (total.total ?? 0) + (usage.total ?? usage.input + usage.output);
+	total.cost = (total.cost ?? 0) + (usage.cost ?? 0);
+}
+
+export class MangaPipeline {
+	readonly store: ProjectStore;
+	readonly config: MangaConfig;
+	readonly ui: PipelineUi;
+	readonly agentDir: string;
+	readonly signal?: AbortSignal;
+	private readonly runner: RoleRunner;
+	private readonly modelResolver?: (modelId?: string) => unknown;
+	private client?: AgnesClient;
+	private lastReport = 0;
+	private activeUsage = emptyUsage();
+
+	constructor(options: PipelineOptions) {
+		this.store = options.store;
+		this.config = options.config;
+		this.ui = options.ui;
+		this.agentDir = options.agentDir;
+		this.signal = options.signal;
+		this.runner = options.runner ?? defaultRunner;
+		this.client = options.client;
+		this.modelResolver = options.resolveModel;
+	}
+
+	get project(): MangaProject {
+		return this.store.project;
+	}
+
+	get phase(): Phase {
+		return this.store.phase;
+	}
+
+	// ---------------------------------------------------------------------
+	// Entry points
+	// ---------------------------------------------------------------------
+
+	async next(): Promise<void> {
+		try {
+			await this.dispatch();
+		} catch (error) {
+			if (this.signal?.aborted) {
+				this.ui.notify("已取消当前任务。", "warning");
+				return;
+			}
+			const message = error instanceof Error ? error.message : String(error);
+			this.store.markError(message);
+			this.ui.updateStatus(this.store);
+			throw error;
+		}
+	}
+
+	private async dispatch(): Promise<void> {
+		switch (this.store.phase) {
+			case "script_analysis":
+				return this.runScriptAnalysis();
+			case "script_gate":
+				return this.runScriptGate();
+			case "design":
+				return this.runDirector();
+			case "cast":
+				return this.runCharacterDesigner();
+			case "character_images":
+				return this.runCharacterImages();
+			case "cast_gate":
+				return this.runCastGate();
+			case "storyboard":
+				return this.runStoryboard();
+			case "storyboard_gate":
+				return this.runStoryboardGate();
+			case "prompts":
+				return this.runPrompts();
+			case "image_gen":
+				return this.runImageGen();
+			case "qa":
+				return this.runQa();
+			case "repair":
+				return this.runRepair();
+			case "build":
+				return this.runBuild();
+			case "final_gate":
+				return this.runFinalGate();
+			case "done":
+				this.ui.notify(`《${this.project.title}》已完成。`, "info");
+				return;
+			case "paused":
+				this.ui.notify("项目已暂停。使用 /manga resume 恢复。", "info");
+				return;
+			case "error": {
+				const previous = this.store.state.previousPhase;
+				if (!previous) {
+					this.ui.notify(`上次出错：${this.store.state.lastError?.message ?? "未知错误"}。使用 /manga doctor 检查或 /manga next 重试。`, "error");
+					return;
+				}
+				this.ui.notify(`正在重试上次失败的阶段（${previous}）…`, "warning");
+				this.store.state.phase = previous;
+				this.store.state.previousPhase = null;
+				this.store.clearError();
+				await this.next();
+				return;
+			}
+			default:
+				this.ui.notify(`当前阶段「${this.store.phase}」没有可执行的步骤。`, "info");
+				return;
+		}
+	}
+
+	async runAll(maxSteps = 40): Promise<void> {
+		for (let step = 0; step < maxSteps; step++) {
+			const before = this.store.phase;
+			await this.next();
+			const after = this.store.phase;
+			if (after === "done" || after === "paused" || after === "error") return;
+			if (after === before) return;
+			if (["script_gate", "cast_gate", "storyboard_gate", "final_gate"].includes(after) && gatePolicy(this.project, gateIdForPhase(after)!) !== "off") return;
+		}
+	}
+
+	// ---------------------------------------------------------------------
+	// Gates
+	// ---------------------------------------------------------------------
+
+	async approveCurrentGate(feedback?: string): Promise<void> {
+		const phase = this.store.phase;
+		const gate = gateIdForPhase(phase);
+		if (!gate) throw new Error(`当前阶段「${phase}」不是闸门`);
+		this.store.recordGate(gate, "approved", { feedback });
+		switch (gate) {
+			case "script":
+				this.store.transition("design");
+				break;
+			case "cast":
+				this.store.transition("storyboard");
+				break;
+			case "storyboard":
+				this.store.transition("prompts");
+				break;
+			case "final":
+				this.store.transition("done");
+				break;
+		}
+		this.ui.updateStatus(this.store);
+		await this.next();
+	}
+
+	async reviseCurrentGate(feedback: string): Promise<void> {
+		const gate = gateIdForPhase(this.store.phase);
+		if (!gate) throw new Error(`当前阶段「${this.store.phase}」不是闸门`);
+		this.store.recordGate(gate, "rejected", { feedback });
+		this.store.state.pendingFeedback = feedback;
+		this.store.saveState();
+		switch (gate) {
+			case "script": {
+				const path = join(this.store.root, "source", "clarifications.md");
+				const previous = readText(path) ?? "# 用户确认记录\n\n";
+				writeAtomic(path, `${previous}${previous.endsWith("\n") ? "" : "\n"}## 修改意见（${nowIso()}）\n${feedback}\n\n`);
+				this.store.transition("script_analysis");
+				await this.runScriptAnalysis(feedback);
+				return;
+			}
+			case "cast":
+				this.store.transition("cast");
+				return this.runCharacterDesigner(feedback);
+			case "storyboard":
+				this.store.transition("storyboard");
+				return this.runStoryboard(feedback);
+			case "final":
+				this.ui.notify("成品确认阶段的修改请用 /manga regen <page> <panel> 重画具体格子，再 /manga approve。", "info");
+				return;
+		}
+	}
+
+	// ---------------------------------------------------------------------
+	// Script
+	// ---------------------------------------------------------------------
+
+	async runScriptAnalysis(feedback?: string): Promise<void> {
+		await this.locked("script_analyst", async () => {
+			const result = await this.runRoleWithRetry("script_analyst", {
+				targets: roleTargets("script_analyst"),
+				feedback: feedback ?? this.takeFeedback(),
+			});
+			if (!result.ok) return;
+			const analysis = this.store.readAnalysis();
+			if (!analysis) throw new Error("analysis.json 读取失败");
+			this.store.state.pendingQuestions = analysis.issues ?? [];
+			this.store.saveState();
+			const policy = gatePolicy(this.project, "script");
+			const blocking = questionsNeedingUser(analysis, policy);
+			if (policy === "off" && analysis.issues.length > 0) {
+				recordAssumptions(this.store, analysis, "script gate 已关闭，全部问题按建议假设处理。");
+			}
+			if (blocking.length > 0) {
+				this.ui.notify(`剧本有 ${blocking.length} 个问题需要确认。`, "warning");
+				this.store.transition("script_gate");
+			} else {
+				this.ui.notify(`剧本分析完成：${analysis.scenes.length} 个场景，预计 ${analysis.pageEstimate} 页。`, "info");
+				this.store.transition("design");
+			}
+			this.ui.updateStatus(this.store);
+		});
+	}
+
+	private async runScriptGate(): Promise<void> {
+		const analysis = this.store.readAnalysis();
+		if (!analysis) throw new Error("找不到 analysis.json，请先运行 /manga next 重试剧本分析");
+		const decision = await runScriptGateUi({
+			policy: gatePolicy(this.project, "script"),
+			store: this.store,
+			ui: this.ui,
+			analysis,
+		});
+		if (decision.kind === "pause") {
+			this.store.pause();
+			return;
+		}
+		if (decision.kind === "answered") {
+			const rounds = this.store.state.runs.filter((run) => run.role === "script_analyst").length;
+			if (rounds >= 3) {
+				recordAssumptions(this.store, analysis, "已达澄清轮次上限，剩余问题按假设处理。");
+				this.store.recordGate("script", "approved");
+				this.store.transition("design");
+				return;
+			}
+			this.store.transition("script_analysis");
+			await this.runScriptAnalysis();
+			return;
+		}
+		this.store.recordGate("script", "approved");
+		this.store.transition("design");
+		this.ui.updateStatus(this.store);
+	}
+
+	// ---------------------------------------------------------------------
+	// Design + characters
+	// ---------------------------------------------------------------------
+
+	async runDirector(feedback?: string): Promise<void> {
+		await this.locked("director", async () => {
+			const result = await this.runRoleWithRetry("director", {
+				targets: ["bible.json"],
+				feedback: feedback ?? this.takeFeedback(),
+			});
+			if (!result.ok) return;
+			this.store.transition("cast");
+			this.ui.updateStatus(this.store);
+		});
+	}
+
+	async runCharacterDesigner(feedback?: string): Promise<void> {
+		await this.locked("character_designer", async () => {
+			const bible = this.store.readBible();
+			const result = await this.runRoleWithRetry("character_designer", {
+				targets: roleTargets("character_designer", { bible }),
+				feedback: feedback ?? this.takeFeedback(),
+			});
+			if (!result.ok) return;
+			this.store.transition("character_images");
+			this.ui.updateStatus(this.store);
+		});
+	}
+
+	async runCharacterImages(force = false, onlyId?: string): Promise<void> {
+		await this.locked("code", async () => {
+			const run = this.store.beginRun("code", "character_images", { note: "角色立绘" });
+			try {
+				const client = this.getClient();
+				const result = await generateCharacterImages({
+					store: this.store,
+					config: this.config,
+					client,
+					signal: this.signal,
+					force,
+					onlyId,
+					onProgress: (progress) => {
+						this.report(`${progress.label} ${progress.index}/${progress.total}`);
+					},
+				});
+				this.store.finishRun(run.id, { status: "success" });
+				this.ui.notify(`角色立绘：成功 ${result.done}，跳过 ${result.skipped}，失败 ${result.failed}。`, result.failed ? "warning" : "info");
+				this.store.transition("cast_gate");
+				this.ui.updateStatus(this.store);
+			} catch (error) {
+				this.store.finishRun(run.id, { status: this.signal?.aborted ? "aborted" : "error", error: messageOf(error) });
+				throw error;
+			}
+		});
+	}
+
+	private async runCastGate(): Promise<void> {
+		const bible = this.store.readBible();
+		const summary = [
+			`角色：${(bible?.cast ?? []).map((member) => `${member.name}(${member.id})`).join("、")}`,
+			`画风：${this.project.style.label} · ${this.project.style.ratio}`,
+			`立绘目录：${join(this.store.root, "characters")}`,
+		].join("\n");
+		const decision = await runReviewGate({
+			gate: "cast",
+			title: "角色设定确认",
+			summary,
+			ui: this.ui,
+			store: this.store,
+		});
+		if (decision.kind === "pause") {
+			this.store.pause();
+			return;
+		}
+		if (decision.kind === "revise") {
+			this.store.transition("cast");
+			await this.runCharacterDesigner(decision.feedback);
+			return;
+		}
+		this.store.transition("storyboard");
+		this.ui.updateStatus(this.store);
+	}
+
+	// ---------------------------------------------------------------------
+	// Storyboard + prompts
+	// ---------------------------------------------------------------------
+
+	async runStoryboard(feedback?: string, force = false): Promise<void> {
+		await this.locked("storyboard", async () => {
+			const analysis = this.store.readAnalysis();
+			if (!analysis) throw new Error("找不到 analysis.json，无法分镜");
+			const total = Math.max(1, Math.min(analysis.pageEstimate, 40));
+			const fb = feedback ?? this.takeFeedback();
+			let completed = 0;
+			for (let index = 1; index <= total; index++) {
+				if (this.signal?.aborted) throw new Error("已取消");
+				const pageId = pageIdOf(index);
+				const existing = this.store.readPage(index);
+				if (!force && !fb && existing) {
+					this.report(`分镜 ${pageId} 已存在，跳过`);
+					completed++;
+					continue;
+				}
+				this.report(`分镜 ${pageId}（${index}/${total}）`);
+				const result = await this.runRoleWithRetry("storyboard", {
+					pageIndex: index,
+					pageId,
+					targets: [`pages/${pageId}.json`],
+					feedback: fb,
+				});
+				if (!result.ok) return;
+				completed++;
+			}
+			this.ui.notify(`分镜完成：${completed}/${total} 页。`, "info");
+			this.store.transition("storyboard_gate");
+			this.ui.updateStatus(this.store);
+		});
+	}
+
+	private async runStoryboardGate(): Promise<void> {
+		const pages = this.store.listPageKeys();
+		const summary = [
+			`共 ${pages.length} 页，${this.store.state.stats.panels} 格。`,
+			`目录：${join(this.store.root, "pages")}`,
+			"请在 Web 预览中查看分镜文字（图片尚未生成）。",
+		].join("\n");
+		const decision = await runReviewGate({
+			gate: "storyboard",
+			title: "分镜确认（出图前）",
+			summary,
+			ui: this.ui,
+			store: this.store,
+		});
+		if (decision.kind === "pause") {
+			this.store.pause();
+			return;
+		}
+		if (decision.kind === "revise") {
+			this.store.transition("storyboard");
+			await this.runStoryboard(decision.feedback, true);
+			return;
+		}
+		this.store.transition("prompts");
+		this.ui.updateStatus(this.store);
+	}
+
+	async runPrompts(feedback?: string, force = false): Promise<void> {
+		await this.locked("prompt_artist", async () => {
+			const keys = this.store.listPageKeys();
+			const fb = feedback ?? this.takeFeedback();
+			for (const [index, key] of keys.entries()) {
+				if (this.signal?.aborted) throw new Error("已取消");
+				const page = this.store.readPageByKey(key);
+				if (!page) continue;
+				const ready = page.panels.every((panel) => Boolean(panel.prompt?.trim()));
+				if (!force && !fb && ready) {
+					this.report(`提示词 ${key} 已存在，跳过`);
+					continue;
+				}
+				this.report(`提示词 ${key}（${index + 1}/${keys.length}）`);
+				const result = await this.runRoleWithRetry("prompt_artist", {
+					pageIndex: page.index,
+					pageId: key,
+					targets: [`pages/${key}.json`],
+					feedback: fb,
+				});
+				if (!result.ok) return;
+			}
+			this.ui.notify("提示词与 lettering 已就绪。", "info");
+			this.store.transition("image_gen");
+			this.ui.updateStatus(this.store);
+		});
+	}
+
+	// ---------------------------------------------------------------------
+	// Images
+	// ---------------------------------------------------------------------
+
+	async runImageGen(force = false): Promise<void> {
+		await this.locked("code", async () => {
+			const run = this.store.beginRun("code", "image_gen", { note: "分镜出图" });
+			try {
+				const result = await generatePanelImages({
+					store: this.store,
+					config: this.config,
+					client: this.getClient(),
+					signal: this.signal,
+					force,
+					onProgress: (progress) => {
+						const suffix = progress.error ? ` · ${progress.error}` : "";
+						this.report(`${progress.label} ${progress.index}/${progress.total}${suffix}`);
+					},
+				});
+				this.store.finishRun(run.id, { status: "success" });
+				this.ui.notify(
+					`出图：成功 ${result.done}，跳过 ${result.skipped}，失败 ${result.failed}${result.failures.length ? `（${result.failures.slice(0, 3).join(", ")}）` : ""}。`,
+					result.failed ? "warning" : "info",
+				);
+				this.store.transition("qa");
+				this.ui.updateStatus(this.store);
+			} catch (error) {
+				this.store.finishRun(run.id, { status: this.signal?.aborted ? "aborted" : "error", error: messageOf(error) });
+				throw error;
+			}
+		});
+	}
+
+	// ---------------------------------------------------------------------
+	// QA / repair
+	// ---------------------------------------------------------------------
+
+	async runQa(): Promise<void> {
+		await this.locked("code", async () => {
+			const run = this.store.beginRun("code", "qa", { note: "结构审校" });
+			try {
+				const report = this.buildQaReport();
+				writeJsonAtomic(join(this.store.root, "qa", "report.json"), report);
+				writeAtomic(join(this.store.root, "qa", "report.md"), renderQaMarkdown(report));
+				ensureDir(join(this.store.root, "qa"));
+				this.store.finishRun(run.id, { status: "success" });
+				const repairRuns = this.store.state.runs.filter((item) => item.role === "repairer").length;
+				if (report.repairTargets.length > 0 && repairRuns < this.config.qa.repairRounds) {
+					this.ui.notify(`审校发现 ${report.repairTargets.length} 个问题，进入修复。`, "warning");
+					this.store.transition("repair");
+				} else {
+					if (report.repairTargets.length > 0) {
+						this.ui.notify(`审校仍有 ${report.repairTargets.length} 个问题，已达修复轮次上限。`, "warning");
+					}
+					this.store.transition("build");
+				}
+				this.ui.updateStatus(this.store);
+			} catch (error) {
+				this.store.finishRun(run.id, { status: "error", error: messageOf(error) });
+				throw error;
+			}
+		});
+	}
+
+	private buildQaReport(): QaReport {
+		const bible = this.store.readBible();
+		const errors: string[] = [];
+		const warnings: string[] = [];
+		const missingText: string[] = [];
+		const overlong: string[] = [];
+		const tooManyBubbles: string[] = [];
+		let checked = 0;
+		for (const key of this.store.listPageKeys()) {
+			const page = this.store.readPageByKey(key);
+			if (!page) {
+				errors.push(`缺少页面文件: ${key}.json`);
+				continue;
+			}
+			const validation = validatePage(page, {
+				bible,
+				stylePrompt: composeStylePrompt(this.project.style),
+				stage: "prompts",
+				projectRoot: this.store.root,
+			});
+			for (const issue of validation.issues) {
+				if (/超过 \d+ 字/.test(issue)) overlong.push(issue);
+				else if (/对白超过 2 条/.test(issue)) tooManyBubbles.push(issue);
+				else if (/未包含 dialogue/.test(issue)) missingText.push(issue);
+				else errors.push(issue);
+			}
+			for (const panel of page.panels) {
+				checked += 1;
+				const rel = panel.image?.file;
+				if (!rel || !fileExists(resolveWithin(this.store.root, rel))) {
+					errors.push(`${panelKey(page.id, panel.id)} 缺少图片`);
+				}
+				for (const ref of panel.refs ?? []) {
+					if (!fileExists(resolveWithin(this.store.root, ref))) {
+						errors.push(`${panelKey(page.id, panel.id)} 的参考图不存在: ${ref}`);
+					}
+				}
+				if (panel.image?.status === "failed") {
+					errors.push(`${panelKey(page.id, panel.id)} 出图失败：${panel.image.error ?? "未知"}`);
+				}
+			}
+		}
+		if (bible) {
+			const refCheck = validateRefImages(bible, this.store.root);
+			errors.push(...refCheck.issues);
+		}
+		const repairTargets = [...new Set([...extractPanelKeys(errors), ...extractPanelKeys(missingText), ...extractPanelKeys(overlong), ...extractPanelKeys(tooManyBubbles)])].sort();
+		return {
+			schemaVersion: 1,
+			generatedAt: new Date().toISOString(),
+			structural: { errors, warnings },
+			lettering: { checked, missingText, overlong, tooManyBubbles },
+			vision: { enabled: this.config.qa.vision, issues: [] },
+			verdict: errors.length === 0 && missingText.length === 0 && overlong.length === 0 && tooManyBubbles.length === 0 ? "pass" : "needs-repair",
+			repairTargets,
+		};
+	}
+
+	async runRepair(): Promise<void> {
+		await this.locked("repairer", async () => {
+			const report = readJson<QaReport>(join(this.store.root, "qa", "report.json"));
+			if (!report || report.repairTargets.length === 0) {
+				this.store.transition("build");
+				return;
+			}
+			const byPage = new Map<string, string[]>();
+			for (const key of report.repairTargets) {
+				const [pageId] = key.split("/");
+				byPage.set(pageId, [...(byPage.get(pageId) ?? []), key]);
+			}
+			for (const [pageId, keys] of byPage) {
+				const page = this.store.readPageByKey(pageId);
+				if (!page) continue;
+				this.report(`修复 ${pageId}`);
+				const result = await this.runRoleWithRetry("repairer", {
+					pageIndex: page.index,
+					pageId,
+					targets: [`pages/${pageId}.json`],
+					repairTargets: keys,
+					feedback: `只修复这些格子：${keys.join(", ")}`,
+				});
+				if (!result.ok) return;
+			}
+			for (const key of report.repairTargets) {
+				this.report(`重画 ${key}`);
+				try {
+					await regeneratePanel({
+						store: this.store,
+						config: this.config,
+						client: this.getClient(),
+						key,
+						signal: this.signal,
+					});
+				} catch (error) {
+					if (error instanceof AgnesError && error.code === "auth") throw error;
+					this.ui.notify(`重画 ${key} 失败：${messageOf(error)}`, "warning");
+				}
+			}
+			this.store.transition("qa");
+			this.ui.updateStatus(this.store);
+		});
+	}
+
+	async regenerate(key: string, note?: string, final = false): Promise<void> {
+		await this.locked("code", async () => {
+			const result = await regeneratePanel({
+				store: this.store,
+				config: this.config,
+				client: this.getClient(),
+				key,
+				note,
+				final,
+				signal: this.signal,
+			});
+			this.ui.notify(`已重画 ${key}（${result.width}x${result.height}）`, "info");
+			this.ui.updateStatus(this.store);
+		});
+	}
+
+	async exportNow(): Promise<void> {
+		await this.locked("code", async () => {
+			const { exportCbz } = await import("./export.ts");
+			const result = await exportCbz({ store: this.store, chunkBytes: this.config.memory.zipChunkBytes });
+			this.ui.notify(`已导出 ${result.entries} 张画面到 ${result.file}`, "info");
+		});
+	}
+
+	// ---------------------------------------------------------------------
+	// Build / final
+	// ---------------------------------------------------------------------
+
+	async runBuild(): Promise<void> {
+		await this.locked("code", async () => {
+			const run = this.store.beginRun("code", "build", { note: "构建与导出" });
+			try {
+				this.store.refreshStats();
+				if (this.store.state.stats.images === 0) {
+					this.store.finishRun(run.id, { status: "success", note: "没有成功画面，跳过导出" });
+					this.ui.notify("没有任何成功画面，跳过 CBZ 导出。请检查失败原因后 /manga next 重试。", "warning");
+					this.store.transition("final_gate");
+					this.ui.updateStatus(this.store);
+					return;
+				}
+				const { exportCbz } = await import("./export.ts");
+				const result = await exportCbz({ store: this.store, chunkBytes: this.config.memory.zipChunkBytes });
+				this.store.finishRun(run.id, { status: "success", outputFiles: [result.file] });
+				this.ui.notify(`已导出 ${result.entries} 张画面到 ${result.file}`, "info");
+				this.store.transition("final_gate");
+				this.ui.updateStatus(this.store);
+			} catch (error) {
+				this.store.finishRun(run.id, { status: "error", error: messageOf(error) });
+				throw error;
+			}
+		});
+	}
+
+	private async runFinalGate(): Promise<void> {
+		const stats = this.store.state.stats;
+		const summary = [
+			`页数：${stats.pages} · 格数：${stats.panels} · 已出图：${stats.images} · 失败：${stats.failedImages}`,
+			`导出：${join(this.store.root, "exports", `${this.project.slug}.cbz`)}`,
+			"确认后项目标记为完成；如需改某格，请先 /manga regen。",
+		].join("\n");
+		const decision = await runReviewGate({
+			gate: "final",
+			title: "成品确认",
+			summary,
+			ui: this.ui,
+			store: this.store,
+		});
+		if (decision.kind === "pause") {
+			this.store.pause();
+			return;
+		}
+		if (decision.kind === "revise") {
+			this.ui.notify("请用 /manga regen <page> <panel> 重画具体格子，然后再次 /manga approve。", "info");
+			return;
+		}
+		this.store.transition("done");
+		this.ui.notify(`《${this.project.title}》已完成。`, "info");
+		this.ui.updateStatus(this.store);
+	}
+
+	// ---------------------------------------------------------------------
+	// Role execution
+	// ---------------------------------------------------------------------
+
+	async runSpecificRole(role: RoleId): Promise<void> {
+		switch (role) {
+			case "script_analyst":
+				return this.runScriptAnalysis();
+			case "director":
+				return this.runDirector();
+			case "character_designer":
+				return this.runCharacterDesigner();
+			case "storyboard":
+				return this.runStoryboard(undefined, true);
+			case "prompt_artist":
+				return this.runPrompts(undefined, true);
+			case "editor":
+				return this.runQa();
+			case "repairer":
+				return this.runRepair();
+		}
+	}
+
+	private async runRoleWithRetry(
+		role: RoleId,
+		options: {
+			targets: string[];
+			pageIndex?: number;
+			pageId?: string;
+			feedback?: string;
+			repairTargets?: string[];
+			compact?: boolean;
+		},
+	): Promise<{ ok: boolean; issues: string[] }> {
+		const maxAttempts = this.config.agents.maxAttempts;
+		let extraInstruction: string | undefined;
+		let lastIssues: string[] = [];
+		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+			if (this.signal?.aborted) throw new Error("已取消");
+			const run = this.store.beginRun(role, this.store.phase, {
+				inputFiles: this.inputFilesFor(role, options.pageId),
+				note: attempt > 1 ? `第 ${attempt} 次尝试` : undefined,
+			});
+			const runDir = ensureDir(join(this.store.root, ".runs", run.id));
+			const systemPrompt = buildSystemPrompt(role);
+			const taskPrompt = buildTaskPrompt({
+				role,
+				project: this.project,
+				projectRoot: this.store.root,
+				config: this.config,
+				pageIndex: options.pageIndex,
+				pageId: options.pageId,
+				feedback: options.feedback,
+				extraInstruction,
+				repairTargets: options.repairTargets,
+			});
+			writeAtomic(join(runDir, "prompt.md"), `# SYSTEM\n\n${systemPrompt}\n\n# TASK\n\n${taskPrompt}\n`);
+			writeJsonAtomic(join(runDir, "meta.json"), {
+				runId: run.id,
+				role,
+				phase: this.store.phase,
+				pageId: options.pageId,
+				targets: options.targets,
+				attempt,
+			});
+			try {
+				const result = await this.runner({
+					role,
+					projectRoot: this.store.root,
+					runDir,
+					targets: options.targets,
+					systemPrompt,
+					taskPrompt,
+					model: this.resolveModel(role),
+					thinkingLevel: this.thinkingFor(role),
+					compact: options.compact ?? (role === "storyboard" || role === "editor"),
+					timeoutMs: this.config.agents.timeoutMs,
+					signal: this.signal,
+					onProgress: (update) => this.onRoleProgress(update),
+				});
+				addUsage(this.activeUsage, result.usage);
+				const page = options.pageIndex ? this.store.readPage(options.pageIndex) : undefined;
+				const validation = validateRoleOutputs({
+					role,
+					projectRoot: this.store.root,
+					targets: options.targets,
+					project: this.project,
+					page,
+				});
+				this.store.finishRun(run.id, {
+					status: "success",
+					usage: result.usage,
+					outputFiles: result.outputs,
+					model: result.model,
+					thinkingLevel: result.thinkingLevel,
+					validation,
+				});
+				if (validation.ok) return { ok: true, issues: [] };
+				lastIssues = validation.issues;
+				extraInstruction = validation.issues.map((issue) => `- ${issue}`).join("\n");
+				if (attempt < maxAttempts) {
+					this.ui.notify(`${roleLabel(role)} 输出未通过校验，正在让同一角色补全…`, "warning");
+				}
+			} catch (error) {
+				this.store.finishRun(run.id, {
+					status: this.signal?.aborted ? "aborted" : "error",
+					error: messageOf(error),
+				});
+				throw error;
+			}
+		}
+		throw new Error(`${roleLabel(role)} 输出未通过校验：\n${lastIssues.map((issue) => `- ${issue}`).join("\n")}`);
+	}
+
+	private inputFilesFor(role: RoleId, pageId?: string): string[] {
+		switch (role) {
+			case "script_analyst":
+				return ["source/script.md", "source/clarifications.md"];
+			case "director":
+				return ["source/script.md", "source/analysis.json", "source/clarifications.md"];
+			case "character_designer":
+				return ["bible.json"];
+			case "storyboard":
+			case "prompt_artist":
+			case "repairer":
+				return ["bible.json", ...(pageId ? [`pages/${pageId}.json`] : [])];
+			case "editor":
+				return ["bible.json", ...this.store.listPageKeys().map((key) => `pages/${key}.json`)];
+		}
+	}
+
+	private async locked(role: RoleId | "code", fn: () => Promise<void>): Promise<void> {
+		this.store.acquireLock(role);
+		try {
+			await fn();
+		} finally {
+			this.store.releaseLock();
+		}
+	}
+
+	private takeFeedback(): string | undefined {
+		const feedback = this.store.state.pendingFeedback ?? undefined;
+		if (feedback) {
+			this.store.state.pendingFeedback = null;
+			this.store.saveState();
+		}
+		return feedback;
+	}
+
+	private report(text: string): void {
+		const now = Date.now();
+		if (now - this.lastReport < 350) return;
+		this.lastReport = now;
+		this.ui.updateStatus(this.store, text, this.activeUsage);
+	}
+
+	private onRoleProgress(update: ProgressUpdate): void {
+		if (update.kind === "text") this.report(update.detail ?? "生成中");
+		else if (update.kind === "tool") this.report(update.detail ?? update.toolName ?? "工具调用");
+		else if (update.kind === "usage") this.ui.updateStatus(this.store, undefined, this.activeUsage);
+	}
+
+	private resolveModel(role: RoleId): unknown {
+		if (!this.modelResolver) return undefined;
+		return this.modelResolver(this.config.agents.overrides[role]?.model);
+	}
+
+	private thinkingFor(role: RoleId) {
+		return this.config.agents.overrides[role]?.thinkingLevel ?? this.config.agents.thinkingLevel;
+	}
+
+	private getClient(): AgnesClient {
+		if (this.client) return this.client;
+		const resolved = resolveAgnesKey(this.config, this.agentDir);
+		if (!resolved) {
+			throw new Error(
+				`未找到 Agnes API Key。请设置环境变量 ${this.config.agnes.apiKeyEnv}，或运行 /manga key 保存。`,
+			);
+		}
+		this.client = new AgnesClient({
+			baseUrl: this.config.agnes.baseUrl,
+			apiKey: resolved.key,
+			model: this.config.image.model || this.config.agnes.model,
+			timeoutMs: this.config.image.timeoutMs,
+			retries: this.config.image.retries,
+			maxDownloadBytes: this.config.image.maxDownloadBytes,
+			streamChunkBytes: this.config.image.streamChunkBytes,
+		});
+		return this.client;
+	}
+}
+
+export function gateIdForPhase(phase: Phase): GateId | undefined {
+	switch (phase) {
+		case "script_gate":
+			return "script";
+		case "cast_gate":
+			return "cast";
+		case "storyboard_gate":
+			return "storyboard";
+		case "final_gate":
+			return "final";
+		default:
+			return undefined;
+	}
+}
+
+export function roleForPhase(phase: Phase): RoleId | undefined {
+	switch (phase) {
+		case "script_analysis":
+			return "script_analyst";
+		case "design":
+			return "director";
+		case "cast":
+			return "character_designer";
+		case "storyboard":
+			return "storyboard";
+		case "prompts":
+			return "prompt_artist";
+		case "qa":
+			return "editor";
+		case "repair":
+			return "repairer";
+		default:
+			return undefined;
+	}
+}
+
+export function roleLabel(role: RoleId): string {
+	switch (role) {
+		case "script_analyst":
+			return "剧本分析师";
+		case "director":
+			return "导演";
+		case "character_designer":
+			return "角色设计师";
+		case "storyboard":
+			return "分镜师";
+		case "prompt_artist":
+			return "提示词美术";
+		case "editor":
+			return "审校";
+		case "repairer":
+			return "修复师";
+	}
+}
+
+export function isRole(value: string): value is RoleId {
+	return (ROLE_IDS as readonly string[]).includes(value);
+}
+
+function messageOf(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function renderQaMarkdown(report: QaReport): string {
+	const lines = [
+		"# QA 报告",
+		"",
+		`- 时间：${report.generatedAt}`,
+		`- 结论：${report.verdict}`,
+		`- 检查格数：${report.lettering.checked}`,
+		"",
+		"## 结构问题",
+		...(report.structural.errors.length ? report.structural.errors.map((item) => `- ${item}`) : ["- 无"]),
+		"",
+		"## 文字 / 气泡",
+		`- 缺少对白原文：${report.lettering.missingText.length}`,
+		`- 文字超长：${report.lettering.overlong.length}`,
+		`- 气泡过多：${report.lettering.tooManyBubbles.length}`,
+		"",
+		"## 需要修复",
+		...(report.repairTargets.length ? report.repairTargets.map((item) => `- ${item}`) : ["- 无"]),
+		"",
+	];
+	return lines.join("\n");
+}
+
+/** Exposed for tests / status output. */
+export function pipelineSummary(store: ProjectStore): string {
+	const { state, project } = store;
+	return [
+		`《${project.title}》`,
+		`阶段：${state.phase}`,
+		`统计：${state.stats.pages} 页 / ${state.stats.panels} 格 / ${state.stats.images} 图 / 失败 ${state.stats.failedImages}`,
+		`闸门：${(Object.entries(state.gates) as Array<[string, { status: string }]>).map(([gate, record]) => `${gate}:${record.status}`).join(" · ")}`,
+	].join("\n");
+}
+
+export type { Bible, MangaPage, ScriptAnalysis };

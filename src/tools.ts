@@ -1,0 +1,187 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { StringEnum } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
+import {
+	actionAbort,
+	actionApprove,
+	actionAuto,
+	actionCast,
+	actionDoctor,
+	actionExport,
+	actionInit,
+	actionListProjects,
+	actionModels,
+	actionNext,
+	actionOpen,
+	actionPause,
+	actionPrompt,
+	actionQa,
+	actionRegen,
+	actionResume,
+	actionRevise,
+	actionRollback,
+	actionRunAll,
+	actionRunRole,
+	actionStatus,
+	actionStep,
+	actionStyle,
+	actionWeb,
+} from "./actions.ts";
+import type { MangaApp } from "./app.ts";
+
+const ACTIONS = [
+	"init",
+	"status",
+	"next",
+	"step",
+	"run_all",
+	"run_role",
+	"approve",
+	"revise",
+	"web",
+	"regen_panel",
+	"prompt_panel",
+	"cast",
+	"qa",
+	"style",
+	"configure",
+	"set_auto",
+	"pause",
+	"resume",
+	"abort",
+	"doctor",
+	"open",
+	"rollback",
+	"export",
+	"list",
+	"help",
+] as const;
+
+const HELP = `manga_team 动作：
+init / status / next / step / run_all / run_role / approve / revise
+web / regen_panel / prompt_panel / cast / qa / style / configure / set_auto
+pause / resume / abort / doctor / open / rollback / export / list`;
+
+function text(value: string, details: Record<string, unknown> = {}) {
+	return { content: [{ type: "text" as const, text: value }], details };
+}
+
+export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
+	pi.registerTool({
+		name: "manga_team",
+		label: "漫画工作室",
+		description:
+			"驱动多 Agent 漫画流水线：创建项目、推进阶段、运行角色、确认闸门、预览、重画单格、导出。耗时 action 会在后台启动并立即返回；一次只允许一个后台任务。",
+		promptSnippet: "驱动多 Agent 漫画流水线按阶段创作、确认和导出",
+		promptGuidelines: [
+			"Use manga_team when the user asks to turn a script into a manga, continue a manga project, review a gate, preview images, or export.",
+			"Call manga_team with one action at a time; never run multiple manga_team calls in parallel.",
+			"Long-running manga_team actions return immediately after starting a background job; use status to inspect progress.",
+			"After starting a background job, do not start another manga_team action in the same turn; report the job and wait.",
+			"When manga_team reports a gate (script/cast/storyboard/final), ask the user to confirm before advancing.",
+			"Use set_auto and run_all only when the user explicitly asks for fully automatic operation.",
+			"When the user wants different art, use style before generating images; switching style invalidates cast, prompts and panels.",
+		],
+		parameters: Type.Object({
+			action: StringEnum(ACTIONS),
+			title: Type.Optional(Type.String({ description: "init 时的书名" })),
+			script: Type.Optional(Type.String({ description: "init 时的剧本正文" })),
+			script_path: Type.Optional(Type.String({ description: "init 时的剧本文件路径" })),
+			style: Type.Optional(
+				StringEnum(["manga-bw", "manhua-color", "webtoon", "custom"], { description: "画风预设" }),
+			),
+			role: Type.Optional(Type.String({ description: "run_role / configure 的角色 id" })),
+			page: Type.Optional(Type.String({ description: "regen_panel / prompt_panel 的页，如 page-001" })),
+			panel: Type.Optional(Type.String({ description: "regen_panel / prompt_panel 的格，如 panel-02" })),
+			note: Type.Optional(Type.String({ description: "regen_panel 的额外方向" })),
+			final: Type.Optional(Type.Boolean({ description: "regen_panel 是否用最终尺寸" })),
+			feedback: Type.Optional(Type.String({ description: "approve / revise 的意见" })),
+			host: Type.Optional(Type.String({ description: "web 绑定地址，如 0.0.0.0" })),
+			port: Type.Optional(Type.Number({ description: "web 端口" })),
+			model: Type.Optional(Type.String({ description: "configure 的模型 provider/id" })),
+			auto: Type.Optional(Type.Boolean({ description: "set_auto 开启/关闭全自动" })),
+			run_id: Type.Optional(Type.String({ description: "rollback 的运行快照 id" })),
+			slug: Type.Optional(Type.String({ description: "open 的项目 slug" })),
+		}),
+		executionMode: "sequential",
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const action = params.action;
+			const actionCtx = ctx as never;
+			switch (action) {
+				case "help":
+					return text(HELP);
+				case "init": {
+					if (!params.script && !params.script_path && !ctx.hasUI) {
+						throw new Error("init 需要 script 或 script_path（非交互模式）");
+					}
+					const store = await actionInit(actionCtx, app, {
+						title: params.title,
+						script: params.script,
+						scriptPath: params.script_path,
+						style: params.style,
+					});
+					return text(`已创建《${store.project.title}》（${store.project.slug}）。下一步：next。`, {
+						slug: store.project.slug,
+						style: store.project.style,
+					});
+				}
+				case "status":
+					return text(actionStatus(actionCtx, app));
+				case "list":
+					return text(actionListProjects(actionCtx, app));
+				case "next":
+					return text(actionNext(actionCtx, app));
+				case "step":
+					return text(actionStep(actionCtx, app));
+				case "run_all":
+					return text(actionRunAll(actionCtx, app));
+				case "run_role": {
+					if (!params.role) throw new Error("run_role 需要 role");
+					return text(actionRunRole(actionCtx, app, params.role));
+				}
+				case "approve":
+					return text(actionApprove(actionCtx, app, params.feedback));
+				case "revise": {
+					if (!params.feedback) throw new Error("revise 需要 feedback");
+					return text(actionRevise(actionCtx, app, params.feedback));
+				}
+				case "web":
+					return text(await actionWeb(actionCtx, app, pi, { host: params.host, port: params.port }));
+				case "regen_panel": {
+					if (!params.page || !params.panel) throw new Error("regen_panel 需要 page 和 panel");
+					return text(actionRegen(actionCtx, app, `${params.page}/${params.panel}`, params.note, params.final));
+				}
+				case "prompt_panel": {
+					if (!params.page || !params.panel) throw new Error("prompt_panel 需要 page 和 panel");
+					return text(actionPrompt(actionCtx, app, `${params.page}/${params.panel}`));
+				}
+				case "cast":
+					return text(actionCast(actionCtx, app, {}));
+				case "qa":
+					return text(actionQa(actionCtx, app));
+				case "style":
+					return text(await actionStyle(actionCtx, app, params.style));
+				case "configure":
+					return text(await actionModels(actionCtx, app, params.role, params.model));
+				case "set_auto":
+					return text(actionAuto(actionCtx, app, Boolean(params.auto)));
+				case "pause":
+					return text(actionPause(actionCtx, app));
+				case "resume":
+					return text(actionResume(actionCtx, app));
+				case "abort":
+					return text(actionAbort(actionCtx, app));
+				case "doctor":
+					return text(actionDoctor(actionCtx, app));
+				case "open":
+					return text(actionOpen(actionCtx, app, params.slug));
+				case "rollback":
+					return text(actionRollback(actionCtx, app, params.run_id));
+				case "export":
+					return text(actionExport(actionCtx, app));
+				default:
+					return text(`未知 action: ${action}`);
+			}
+		},
+	});
+}

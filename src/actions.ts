@@ -1,0 +1,609 @@
+import { copyFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { AgnesClient } from "./agnes.ts";
+import { composeStylePrompt, makeStyle, STYLE_PRESETS, type MangaConfig } from "./config.ts";
+import { resolveAgnesKey, maskKey, saveAgnesKey } from "./keys.ts";
+import { ensureDir, listDirs, resolveWithin } from "./paths.ts";
+import { MangaPipeline, gateIdForPhase, isRole, roleForPhase, roleLabel, pipelineSummary, type PipelineUi } from "./pipeline.ts";
+import { listProjects, ProjectStore } from "./state.ts";
+import type { RoleId, StylePreset, StyleSelection } from "./types.ts";
+import { updateStatus, notify, phaseLabel } from "./ui.ts";
+import { startWebServer, type WebServerHandle } from "./web/server.ts";
+
+export interface ActionCtx {
+	cwd: string;
+	hasUI: boolean;
+	mode?: string;
+	model?: unknown;
+	modelRegistry?: { find(provider: string, id: string): unknown; getAvailable(): Array<{ id: string; provider: string }> };
+	ui: {
+		select(title: string, options: string[], options?: unknown): Promise<string | undefined>;
+		confirm(title: string, message: string, options?: unknown): Promise<boolean>;
+		input(title: string, placeholder?: string, options?: unknown): Promise<string | undefined>;
+		editor(title: string, prefill?: string, options?: unknown): Promise<string | undefined>;
+		notify(message: string, type?: "info" | "warning" | "error"): void;
+		setStatus(key: string, text: string | undefined): void;
+		setWidget(key: string, lines: string[] | undefined): void;
+	};
+}
+
+interface AppLike {
+	agentDir: string;
+	active?: ProjectStore;
+	baseConfig(): MangaConfig;
+	configFor(cwd: string, store: ProjectStore): MangaConfig;
+	ensure(cwd: string, slug?: string): { store: ProjectStore; config: MangaConfig };
+	create(cwd: string, input: { title?: string; style: StyleSelection; script: string }): {
+		store: ProjectStore;
+		config: MangaConfig;
+	};
+	list(cwd: string): ReturnType<typeof listProjects>;
+	isBusy(): boolean;
+	busyMessage(): string;
+	startJob(label: string, runner: (controller: AbortController) => Promise<void>): unknown;
+	abortCurrent(): boolean;
+}
+
+let webHandle: WebServerHandle | undefined;
+
+export function stopWebServer(): void {
+	if (!webHandle) return;
+	const handle = webHandle;
+	webHandle = undefined;
+	void handle.close().catch(() => undefined);
+}
+
+function uiFor(ctx: ActionCtx): PipelineUi {
+	return {
+		hasUI: ctx.hasUI,
+		select: (title, options) => ctx.ui.select(title, options),
+		confirm: (title, message) => ctx.ui.confirm(title, message),
+		input: (title, placeholder) => ctx.ui.input(title, placeholder),
+		editor: (title, prefill) => ctx.ui.editor(title, prefill ?? ""),
+		notify: (message, type) => ctx.ui.notify(message, type),
+		updateStatus: (store, progress, usage) => updateStatus(ctx as never, store, progress, usage),
+	};
+}
+
+export function resolveModelFor(ctx: ActionCtx, id?: string): unknown {
+	if (!id) return ctx.model;
+	const [provider, modelId] = id.includes("/") ? id.split("/", 2) : [undefined, id];
+	try {
+		if (provider && ctx.modelRegistry) return ctx.modelRegistry.find(provider, modelId) ?? ctx.model;
+		const available = ctx.modelRegistry?.getAvailable() ?? [];
+		return available.find((model) => model.id === modelId) ?? ctx.model;
+	} catch {
+		return ctx.model;
+	}
+}
+
+function makePipeline(ctx: ActionCtx, app: AppLike, store: ProjectStore, config: MangaConfig, signal?: AbortSignal): MangaPipeline {
+	return new MangaPipeline({
+		store,
+		config,
+		ui: uiFor(ctx),
+		agentDir: app.agentDir,
+		signal,
+		resolveModel: (id) => resolveModelFor(ctx, id),
+	});
+}
+
+function startBackground(
+	ctx: ActionCtx,
+	app: AppLike,
+	label: string,
+	fn: (pipeline: MangaPipeline, store: ProjectStore) => Promise<void>,
+): string {
+	if (app.isBusy()) throw new Error(app.busyMessage());
+	app.ensure(ctx.cwd);
+	app.startJob(label, async (controller) => {
+		const { store, config } = app.ensure(ctx.cwd);
+		const pipeline = makePipeline(ctx, app, store, config, controller.signal);
+		try {
+			await fn(pipeline, store);
+		} catch (error) {
+			if (!controller.signal.aborted) {
+				notify(ctx as never, error instanceof Error ? error.message : String(error), "error");
+			}
+		} finally {
+			updateStatus(ctx as never, store);
+		}
+	});
+	return `⏳ 已启动后台任务：${label}。使用 /manga status 查看进度。`;
+}
+
+// ---------------------------------------------------------------------------
+// init / status
+// ---------------------------------------------------------------------------
+
+const STYLE_LABELS: Array<{ label: string; preset: StylePreset }> = [
+	{ label: "黑白漫画", preset: "manga-bw" },
+	{ label: "全彩国漫", preset: "manhua-color" },
+	{ label: "竖屏条漫", preset: "webtoon" },
+	{ label: "自定义", preset: "custom" },
+];
+
+function presetFromLabel(label: string): StylePreset {
+	return STYLE_LABELS.find((item) => item.label === label)?.preset ?? "manga-bw";
+}
+
+export interface InitInput {
+	title?: string;
+	scriptPath?: string;
+	script?: string;
+	style?: string;
+	customPrompt?: string;
+	ratio?: StyleSelection["ratio"];
+}
+
+export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput): Promise<ProjectStore> {
+	let script = input.script?.trim() ?? "";
+	if (!script && input.scriptPath) {
+		// 剧本路径来自用户，允许绝对路径；相对路径按会话工作目录解析。
+		const abs = isAbsolute(input.scriptPath) ? input.scriptPath : resolve(ctx.cwd, input.scriptPath);
+		if (!existsSync(abs)) throw new Error(`找不到剧本文件: ${input.scriptPath}`);
+		script = readFileSync(abs, "utf8");
+	}
+	if (!script && ctx.hasUI) {
+		script = (await ctx.ui.editor("粘贴剧本（小说体、剧本体、大纲或一句梗概都可以）", "")) ?? "";
+	}
+	if (!script.trim()) throw new Error("未提供剧本。使用 --script <path> 或在 TUI 中粘贴。");
+
+	let title = input.title?.trim();
+	if (!title && ctx.hasUI) {
+		title = (await ctx.ui.input("书名（可留空，自动从剧本取名）", ""))?.trim();
+	}
+
+	const config = app.baseConfig();
+	let style: StyleSelection | undefined;
+	if (input.style) {
+		const preset = (Object.keys(STYLE_PRESETS) as StylePreset[]).includes(input.style as StylePreset)
+			? (input.style as StylePreset)
+			: presetFromLabel(input.style);
+		style = makeStyle(preset, input.customPrompt, input.ratio);
+	} else if (ctx.hasUI) {
+		const choice = await ctx.ui.select(
+			"选择画风",
+			STYLE_LABELS.map((item) => item.label),
+		);
+		if (!choice) throw new Error("已取消创建");
+		const preset = presetFromLabel(choice);
+		let customPrompt: string | undefined;
+		let ratio: StyleSelection["ratio"] | undefined;
+		if (preset === "custom") {
+			customPrompt = (await ctx.ui.editor("画风描述（英文或中文均可）", ""))?.trim();
+			if (!customPrompt) throw new Error("自定义画风需要提供描述");
+		}
+		const ratioChoice = await ctx.ui.select("画面比例", ["3:4（竖版漫画）", "2:3（偏长）", "9:16（条漫）", "1:1（方形）", "16:9（横版）"]);
+		if (ratioChoice?.startsWith("2:3")) ratio = "2:3";
+		else if (ratioChoice?.startsWith("9:16")) ratio = "9:16";
+		else if (ratioChoice?.startsWith("1:1")) ratio = "1:1";
+		else if (ratioChoice?.startsWith("16:9")) ratio = "16:9";
+		else ratio = "3:4";
+		style = makeStyle(preset, customPrompt, ratio);
+	} else {
+		style = makeStyle(config.style);
+	}
+
+	const { store } = app.create(ctx.cwd, { title, style, script });
+	notify(ctx as never, `已创建《${store.project.title}》（${store.project.style.label}，${store.project.style.ratio}）。运行 /manga next 开始剧本分析。`, "info");
+	updateStatus(ctx as never, store);
+	return store;
+}
+
+export function actionStatus(ctx: ActionCtx, app: AppLike): string {
+	try {
+		const { store } = app.ensure(ctx.cwd);
+		updateStatus(ctx as never, store);
+		const lines = [
+			pipelineSummary(store),
+			`画风：${store.project.style.label} · ${store.project.style.ratio} · ${store.project.style.preset}`,
+			`目录：${store.root}`,
+			webHandle ? `Web：${webHandle.url}` : "Web：未启动（/manga web）",
+		];
+		if (store.state.pendingQuestions?.length) {
+			lines.push(`待确认问题：${store.state.pendingQuestions.length}（运行 /manga next）`);
+		}
+		if (store.state.lastError?.message) lines.push(`上次错误：${store.state.lastError.message}`);
+		return lines.join("\n");
+	} catch (error) {
+		return error instanceof Error ? error.message : String(error);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// pipeline actions
+// ---------------------------------------------------------------------------
+
+export function actionNext(ctx: ActionCtx, app: AppLike): string {
+	return startBackground(ctx, app, "推进下一阶段", (pipeline) => pipeline.next());
+}
+
+export function actionStep(ctx: ActionCtx, app: AppLike): string {
+	return startBackground(ctx, app, "运行下一步", (pipeline) => pipeline.next());
+}
+
+export function actionRunAll(ctx: ActionCtx, app: AppLike): string {
+	return startBackground(ctx, app, "全自动运行", (pipeline) => pipeline.runAll());
+}
+
+export function actionRunRole(ctx: ActionCtx, app: AppLike, roleArg: string): string {
+	const role = roleArg.trim();
+	if (!isRole(role)) throw new Error(`未知角色：${roleArg}。可用：${["script_analyst", "director", "character_designer", "storyboard", "prompt_artist", "editor", "repairer"].join(", ")}`);
+	const { store } = app.ensure(ctx.cwd);
+	const expected = roleForPhase(store.state.phase);
+	return startBackground(ctx, app, `运行 ${roleLabel(role)}`, async (pipeline) => {
+		if (expected && expected !== role) {
+			notify(ctx as never, `当前阶段应运行 ${roleLabel(expected)}，而不是 ${roleLabel(role)}；仍按请求执行。`, "warning");
+		}
+		await pipeline.runSpecificRole(role);
+	});
+}
+
+export function actionApprove(ctx: ActionCtx, app: AppLike, feedback?: string): string {
+	const { store } = app.ensure(ctx.cwd);
+	if (!gateIdForPhase(store.state.phase)) throw new Error(`当前阶段「${phaseLabel(store.state.phase)}」不是闸门`);
+	return startBackground(ctx, app, "通过闸门", (pipeline) => pipeline.approveCurrentGate(feedback));
+}
+
+export function actionRevise(ctx: ActionCtx, app: AppLike, feedback: string): string {
+	if (!feedback.trim()) throw new Error("请提供修改意见：/manga revise <意见>");
+	const { store } = app.ensure(ctx.cwd);
+	if (!gateIdForPhase(store.state.phase)) throw new Error(`当前阶段「${phaseLabel(store.state.phase)}」不是闸门`);
+	return startBackground(ctx, app, "按意见重做", (pipeline) => pipeline.reviseCurrentGate(feedback.trim()));
+}
+
+export function actionPause(ctx: ActionCtx, app: AppLike): string {
+	const { store } = app.ensure(ctx.cwd);
+	store.pause();
+	updateStatus(ctx as never, store);
+	return "已暂停。使用 /manga resume 恢复。";
+}
+
+export function actionResume(ctx: ActionCtx, app: AppLike): string {
+	const { store } = app.ensure(ctx.cwd);
+	store.resume();
+	updateStatus(ctx as never, store);
+	return `已恢复：${phaseLabel(store.state.phase)}。`;
+}
+
+export function actionAbort(ctx: ActionCtx, app: AppLike): string {
+	const aborted = app.abortCurrent();
+	return aborted ? "已请求中止当前任务。" : "当前没有运行中的任务。";
+}
+
+// ---------------------------------------------------------------------------
+// web
+// ---------------------------------------------------------------------------
+
+export async function actionWeb(
+	ctx: ActionCtx,
+	app: AppLike,
+	pi: { exec?: (command: string, args: string[], options?: unknown) => Promise<unknown> },
+	options: { host?: string; port?: number; open?: boolean; noToken?: boolean } = {},
+): Promise<string> {
+	let config = app.baseConfig();
+	try {
+		config = app.ensure(ctx.cwd).config;
+	} catch {
+		// no project yet: use global config
+	}
+	if (options.noToken) {
+		config = { ...config, web: { ...config.web, token: "off" } };
+		const host = options.host ?? config.web.host;
+		if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
+			notify(ctx as never, "已关闭 token：同一网络内任何人都能看到剧本与画面。请仅在可信网络使用。", "warning");
+		}
+	}
+	if (webHandle) {
+		if (options.open) await openBrowser(pi, webHandle.url);
+		return `Web 预览已在运行：${webHandle.url}`;
+	}
+	const handle = await startWebServer({
+		cwd: ctx.cwd,
+		config,
+		host: options.host ?? config.web.host,
+		port: options.port ?? config.web.port,
+	});
+	webHandle = handle;
+	if (options.open ?? config.web.open) await openBrowser(pi, handle.url);
+	return `Web 预览：${handle.url}`;
+}
+
+async function openBrowser(
+	pi: { exec?: (command: string, args: string[], options?: unknown) => Promise<unknown> },
+	url: string,
+): Promise<void> {
+	if (!pi.exec) return;
+	const candidates: Array<[string, string[]]> = [
+		["xdg-open", [url]],
+		["open", [url]],
+	];
+	for (const [command, args] of candidates) {
+		try {
+			await pi.exec(command, args, { timeout: 5000 });
+			return;
+		} catch {
+			// try next
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// panels / cast / prompts
+// ---------------------------------------------------------------------------
+
+export function normalizePanelKey(input: string): string {
+	const trimmed = input.trim();
+	const match = /^(?:page-)?(\d{1,3})[\/\s-]+(?:panel-)?(\d{1,2})$/.exec(trimmed) ?? /^(page-\d{3})\/(panel-\d{2})$/.exec(trimmed);
+	if (!match) throw new Error(`无效的格子：${input}（示例：page-001/panel-02）`);
+	const page = Number(match[1].replace(/\D/g, ""));
+	const panel = Number(match[2].replace(/\D/g, ""));
+	return `page-${String(page).padStart(3, "0")}/panel-${String(panel).padStart(2, "0")}`;
+}
+
+export function actionRegen(ctx: ActionCtx, app: AppLike, keyInput: string, note?: string, final = false): string {
+	const key = normalizePanelKey(keyInput);
+	return startBackground(ctx, app, `重画 ${key}`, (pipeline) => pipeline.regenerate(key, note, final));
+}
+
+export function actionCast(ctx: ActionCtx, app: AppLike, options: { regen?: boolean; id?: string } = {}): string {
+	const { store } = app.ensure(ctx.cwd);
+	const bible = store.readBible();
+	if (!bible) throw new Error("bible.json 缺失");
+	if (options.regen) {
+		return startBackground(ctx, app, options.id ? `重生成角色 ${options.id} 的立绘` : "重生成角色立绘", async (pipeline) => {
+			await pipeline.runCharacterImages(true, options.id);
+		});
+	}
+	const lines = [
+		`角色（${bible.cast.length}）：`,
+		...bible.cast.map((member) => {
+			const hasRef = existsSync(join(store.root, "characters", member.id, "ref.png"));
+			return `- ${member.id} · ${member.name} · ${member.role} · 立绘${hasRef ? "✔" : "✗"}`;
+		}),
+		`目录：${join(store.root, "characters")}`,
+	];
+	return lines.join("\n");
+}
+
+export function actionPrompt(ctx: ActionCtx, app: AppLike, keyInput: string): string {
+	const key = normalizePanelKey(keyInput);
+	const { store } = app.ensure(ctx.cwd);
+	const [pageId, panelId] = key.split("/");
+	const page = store.readPageByKey(pageId);
+	const panel = page?.panels.find((item) => item.id === panelId);
+	if (!panel) throw new Error(`找不到格子 ${key}`);
+	return [
+		`${key} · ${panel.shot} · ${panel.characters.map((character) => character.id).join(", ") || "无角色"}`,
+		`refs: ${(panel.refs ?? []).join(", ") || "无"}`,
+		"",
+		panel.prompt ?? "（尚未生成 prompt）",
+	].join("\n");
+}
+
+export function actionExport(ctx: ActionCtx, app: AppLike): string {
+	return startBackground(ctx, app, "导出 CBZ", (pipeline) => pipeline.exportNow());
+}
+
+export function actionQa(ctx: ActionCtx, app: AppLike): string {
+	const { store } = app.ensure(ctx.cwd);
+	if (!["image_gen", "qa", "repair", "build"].includes(store.state.phase)) {
+		throw new Error(`当前阶段「${phaseLabel(store.state.phase)}」不能单独审校；请先 /manga next。`);
+	}
+	return startBackground(ctx, app, "结构审校", (pipeline) => pipeline.runQa());
+}
+
+export function actionAuto(ctx: ActionCtx, app: AppLike, on: boolean): string {
+	const { store } = app.ensure(ctx.cwd);
+	store.project.gates = on
+		? { script: "off", cast: "off", storyboard: "off", final: "off" }
+		: { script: "auto", cast: "always", storyboard: "always", final: "always" };
+	store.saveProject();
+	return on
+		? "已开启全自动：闸门全部跳过（剧本 blocker 仍会按假设记录）。使用 /manga run-all 跑完。"
+		: "已关闭全自动：恢复默认闸门。";
+}
+
+// ---------------------------------------------------------------------------
+// style / config / models / key / doctor / open / rollback
+// ---------------------------------------------------------------------------
+
+export async function actionStyle(ctx: ActionCtx, app: AppLike, presetArg?: string): Promise<string> {
+	const { store } = app.ensure(ctx.cwd);
+	let style: StyleSelection | undefined;
+	if (presetArg) {
+		const preset = (Object.keys(STYLE_PRESETS) as StylePreset[]).includes(presetArg as StylePreset)
+			? (presetArg as StylePreset)
+			: presetFromLabel(presetArg);
+		style = makeStyle(preset, undefined, store.project.style.ratio);
+	} else if (ctx.hasUI) {
+		const choice = await ctx.ui.select(`当前画风：${store.project.style.label}（${store.project.style.ratio}）`, [
+			"黑白漫画",
+			"全彩国漫",
+			"竖屏条漫",
+			"自定义",
+			"保持当前",
+		]);
+		if (!choice || choice === "保持当前") return "未修改画风。";
+		const preset = presetFromLabel(choice);
+		let customPrompt: string | undefined;
+		if (preset === "custom") {
+			customPrompt = (await ctx.ui.editor("新的画风描述", store.project.style.customPrompt ?? ""))?.trim();
+			if (!customPrompt) throw new Error("自定义画风需要提供描述");
+		}
+		style = makeStyle(preset, customPrompt, store.project.style.ratio);
+	} else {
+		throw new Error("非交互模式需要指定画风：/manga style manga-bw|manhua-color|webtoon|custom");
+	}
+	const ok = !ctx.hasUI || (await ctx.ui.confirm("切换画风", "会重做角色立绘、全部提示词与画面。是否继续？"));
+	if (!ok) return "未修改画风。";
+	store.project.style = style;
+	store.saveProject();
+	store.resetGatesFrom("cast");
+	store.state.phase = "design";
+	store.state.previousPhase = null;
+	store.state.pendingFeedback = null;
+	store.saveState();
+	updateStatus(ctx as never, store);
+	return `画风已切换为 ${style.label}（${style.ratio}）。需要重新运行 /manga next 从企划开始。`;
+}
+
+export function actionConfig(ctx: ActionCtx, app: AppLike): string {
+	const { store, config } = app.ensure(ctx.cwd);
+	const safe = structuredClone(config);
+	if (safe.agnes.apiKey) safe.agnes.apiKey = maskKey(safe.agnes.apiKey);
+	const stylePrompt = composeStylePrompt(store.project.style);
+	return [
+		`项目：${store.project.slug}`,
+		`阶段：${phaseLabel(store.state.phase)}`,
+		`画风锁定串：${stylePrompt}`,
+		"",
+		JSON.stringify(safe, null, 2),
+	].join("\n");
+}
+
+export async function actionModels(ctx: ActionCtx, app: AppLike, roleArg?: string, modelArg?: string): Promise<string> {
+	const { store } = app.ensure(ctx.cwd);
+	let role = roleArg;
+	let model = modelArg;
+	if (!role && ctx.hasUI) {
+		const choice = await ctx.ui.select("为哪个角色设置模型？", [...["script_analyst", "director", "character_designer", "storyboard", "prompt_artist", "editor", "repairer"], "全部恢复默认"]);
+		if (!choice) return "未修改。";
+		if (choice === "全部恢复默认") {
+			store.project.agents.overrides = {};
+			store.saveProject();
+			return "已恢复全部角色为默认模型。";
+		}
+		role = choice;
+	}
+	if (!role || !isRole(role)) throw new Error("需要有效的角色 id");
+	if (!model && ctx.hasUI) {
+		model = (await ctx.ui.input(`模型（provider/id，留空表示跟随宿主）`, ""))?.trim();
+	}
+	if (!model) {
+		delete store.project.agents.overrides[role as RoleId];
+	} else {
+		store.project.agents.overrides[role as RoleId] = { model };
+	}
+	store.saveProject();
+	return `${roleLabel(role as RoleId)}：${model || "跟随宿主"}。`;
+}
+
+export async function actionKey(ctx: ActionCtx, app: AppLike, options: { key?: string; test?: boolean } = {}): Promise<string> {
+	let key = options.key?.trim();
+	if (!key && ctx.hasUI) {
+		notify(ctx as never, "注意：输入内容会回显。更安全的做法是设置环境变量 AGNES_API_KEY。", "warning");
+		key = (await ctx.ui.input("Agnes API Key", ""))?.trim();
+	}
+	if (key) saveAgnesKey(app.agentDir, key);
+	const config = app.baseConfig();
+	const resolved = resolveAgnesKey(config, app.agentDir);
+	if (!resolved) throw new Error("尚未设置 Agnes API Key");
+	if (!options.test) return `已保存 API Key（${maskKey(resolved.key)}，来自 ${resolved.source === "env" ? "环境变量" : "配置文件"}）。`;
+	const client = new AgnesClient({
+		baseUrl: config.agnes.baseUrl,
+		apiKey: resolved.key,
+		model: config.image.model || config.agnes.model,
+		timeoutMs: config.image.timeoutMs,
+		retries: 0,
+		maxDownloadBytes: config.image.maxDownloadBytes,
+		streamChunkBytes: config.image.streamChunkBytes,
+	});
+	const result = await client.testKey();
+	return `API Key 可用。测试图：${result.width}x${result.height}（${result.format}）。`;
+}
+
+export function actionDoctor(ctx: ActionCtx, app: AppLike): string {
+	const config = app.baseConfig();
+	const lines: string[] = [];
+	try {
+		const { store } = app.ensure(ctx.cwd);
+		lines.push(`项目：${store.project.slug}`);
+		lines.push(`状态文件：${existsSync(join(store.root, "state.json")) ? "✔" : "✗"}`);
+		lines.push(`锁：${store.isLockLive() ? "⚠ 有活动锁（可能有其他会话在运行）" : "✔ 无活动锁"}`);
+		lines.push(`剧本：${store.readScript().trim() ? "✔" : "✗"}`);
+		lines.push(`分析：${store.readAnalysis() ? "✔" : "✗"}`);
+		lines.push(`bible：${store.readBible() ? "✔" : "✗"}`);
+		lines.push(`页数：${store.listPageKeys().length}`);
+		const stats = store.refreshStats();
+		lines.push(`格数：${stats.panels} · 图片：${stats.images} · 失败：${stats.failedImages}`);
+		const runs = store.state.runs;
+		lines.push(`运行记录：${runs.length}（最近：${runs.at(-1)?.role ?? "无"} ${runs.at(-1)?.status ?? ""}）`);
+	} catch (error) {
+		lines.push(error instanceof Error ? error.message : String(error));
+	}
+	try {
+		const key = resolveAgnesKey(config, app.agentDir);
+		lines.push(`Agnes Key：${key ? `✔ ${maskKey(key.key)}（${key.source}）` : "✗ 未设置"}`);
+	} catch (error) {
+		lines.push(`Agnes Key：✗ ${error instanceof Error ? error.message : String(error)}`);
+	}
+	lines.push(`工作区：${join(ctx.cwd, config.workspace)}`);
+	return lines.join("\n");
+}
+
+export function actionOpen(ctx: ActionCtx, app: AppLike, slug?: string): string {
+	if (!slug) {
+		const projects = app.list(ctx.cwd);
+		if (projects.length === 0) return "还没有漫画项目。";
+		return projects
+			.map((project) => `${project.slug === app.active?.project.slug ? "▶" : " "} ${project.slug} · ${project.title} · ${project.phase} · ${project.images}/${project.panels}`)
+			.join("\n");
+	}
+	const { store } = app.ensure(ctx.cwd, slug);
+	updateStatus(ctx as never, store);
+	return `已切换到《${store.project.title}》（${store.project.slug}）。`;
+}
+
+const ROLLBACK_PREFIXES = ["source/", "pages/", "characters/", "qa/"];
+
+export function actionRollback(ctx: ActionCtx, app: AppLike, runId?: string): string {
+	const { store } = app.ensure(ctx.cwd);
+	const runsDir = join(store.root, ".runs");
+	const ids = runId ? [runId] : listDirs(runsDir).slice(-1);
+	if (ids.length === 0) throw new Error("没有可用的运行快照");
+	const id = ids[0];
+	let dir: string;
+	try {
+		dir = resolveWithin(runsDir, id);
+	} catch {
+		throw new Error(`非法的运行快照 id：${id}`);
+	}
+	if (!existsSync(dir)) throw new Error(`找不到运行快照：${id}`);
+	let copied = 0;
+	const walk = (base: string) => {
+		for (const entry of readdirSync(base, { withFileTypes: true })) {
+			const abs = join(base, entry.name);
+			if (entry.isDirectory()) {
+				walk(abs);
+				continue;
+			}
+			const rel = relative(dir, abs).replaceAll("\\", "/");
+			if (rel === "prompt.md" || rel === "meta.json") continue;
+			if (rel !== "bible.json" && !ROLLBACK_PREFIXES.some((prefix) => rel.startsWith(prefix))) continue;
+			const target = join(store.root, rel);
+			ensureDir(dirname(target));
+			copyFileSync(abs, target);
+			copied++;
+		}
+	};
+	walk(dir);
+	store.refreshStats();
+	return `已从快照 ${id} 回滚 ${copied} 个文件。`;
+}
+
+export function actionListProjects(ctx: ActionCtx, app: AppLike): string {
+	const projects = app.list(ctx.cwd);
+	if (projects.length === 0) return "还没有漫画项目。运行 /manga init 创建。";
+	return projects
+		.map((project) => {
+			const active = project.slug === app.active?.project.slug ? "▶" : " ";
+			return `${active} ${project.slug} · ${project.title} · ${project.phase} · 图 ${project.images}/${project.panels}`;
+		})
+		.join("\n");
+}
+
+export function getWebHandle(): WebServerHandle | undefined {
+	return webHandle;
+}

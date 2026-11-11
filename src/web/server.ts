@@ -1,0 +1,339 @@
+import { createReadStream, existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { dirname, extname, join, normalize } from "node:path";
+import { fileURLToPath } from "node:url";
+import { randomBytes } from "node:crypto";
+import type { MangaConfig } from "../config.ts";
+import { ensureDir, readJson, resolveWithin, writeAtomic } from "../paths.ts";
+import { listProjects, ProjectStore } from "../state.ts";
+import type { MangaPage } from "../types.ts";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const PUBLIC_DIR = join(HERE, "public");
+
+export interface WebServerOptions {
+	cwd: string;
+	config: MangaConfig;
+	host?: string;
+	port?: number;
+	token?: string;
+	signal?: AbortSignal;
+}
+
+export interface WebServerHandle {
+	server: Server;
+	url: string;
+	host: string;
+	port: number;
+	token?: string;
+	close(): Promise<void>;
+}
+
+function isLoopback(host: string): boolean {
+	return host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
+function contentType(path: string): string {
+	switch (extname(path).toLowerCase()) {
+		case ".html":
+			return "text/html; charset=utf-8";
+		case ".js":
+			return "text/javascript; charset=utf-8";
+		case ".css":
+			return "text/css; charset=utf-8";
+		case ".json":
+			return "application/json; charset=utf-8";
+		case ".png":
+			return "image/png";
+		case ".jpg":
+		case ".jpeg":
+			return "image/jpeg";
+		case ".webp":
+			return "image/webp";
+		default:
+			return "application/octet-stream";
+	}
+}
+
+function parseCookies(header: string | undefined): Record<string, string> {
+	const out: Record<string, string> = {};
+	if (!header) return out;
+	for (const part of header.split(";")) {
+		const index = part.indexOf("=");
+		if (index < 0) continue;
+		out[part.slice(0, index).trim()] = decodeURIComponent(part.slice(index + 1).trim());
+	}
+	return out;
+}
+
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+	const text = JSON.stringify(body);
+	res.writeHead(status, {
+		"Content-Type": "application/json; charset=utf-8",
+		"Content-Length": Buffer.byteLength(text),
+		"Cache-Control": "no-store",
+		"X-Content-Type-Options": "nosniff",
+	});
+	res.end(text);
+}
+
+function sendText(res: ServerResponse, status: number, text: string, type = "text/plain; charset=utf-8"): void {
+	res.writeHead(status, {
+		"Content-Type": type,
+		"Content-Length": Buffer.byteLength(text),
+		"Cache-Control": "no-store",
+		"X-Content-Type-Options": "nosniff",
+		"Referrer-Policy": "no-referrer",
+	});
+	res.end(text);
+}
+
+/** Resolve a media path, then verify realpath stays inside the project. */
+function safeMediaPath(projectRoot: string, rel: string): string | undefined {
+	try {
+		const abs = resolveWithin(projectRoot, normalize(rel));
+		if (!existsSync(abs)) return undefined;
+		const real = realpathSync(abs);
+		const realRoot = realpathSync(projectRoot);
+		if (!real.startsWith(`${realRoot}/`)) return undefined;
+		if (!statSync(real).isFile()) return undefined;
+		return real;
+	} catch {
+		return undefined;
+	}
+}
+
+function serveFile(req: IncomingMessage, res: ServerResponse, path: string): void {
+	const stat = statSync(path);
+	const type = contentType(path);
+	const etag = `"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+	if (req.headers["if-none-match"] === etag) {
+		res.writeHead(304, { ETag: etag });
+		res.end();
+		return;
+	}
+	const range = req.headers.range;
+	let start = 0;
+	let end = stat.size - 1;
+	let status = 200;
+	if (range) {
+		const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+		if (match) {
+			start = match[1] ? Number(match[1]) : 0;
+			end = match[2] ? Number(match[2]) : stat.size - 1;
+			if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= stat.size) {
+				res.writeHead(416, { "Content-Range": `bytes */${stat.size}` });
+				res.end();
+				return;
+			}
+			end = Math.min(end, stat.size - 1);
+			status = 206;
+		}
+	}
+	const headers: Record<string, string | number> = {
+		"Content-Type": type,
+		"Content-Length": end - start + 1,
+		"Accept-Ranges": "bytes",
+		ETag: etag,
+		"Cache-Control": "no-cache",
+		"X-Content-Type-Options": "nosniff",
+	};
+	if (status === 206) headers["Content-Range"] = `bytes ${start}-${end}/${stat.size}`;
+	res.writeHead(status, headers);
+	if (req.method === "HEAD") {
+		res.end();
+		return;
+	}
+	const stream = createReadStream(path, { start, end, highWaterMark: 64 * 1024 });
+	stream.on("error", () => res.destroy());
+	stream.pipe(res);
+}
+
+function pageSummary(projectRoot: string, slug: string): { pages: Array<{ id: string; index: number; panels: Array<{ id: string; file: string; status: string; version: number }> }> } {
+	const pages: Array<{ id: string; index: number; panels: Array<{ id: string; file: string; status: string; version: number }> }> = [];
+	const pagesDir = join(projectRoot, "pages");
+	if (!existsSync(pagesDir)) return { pages };
+	for (const name of readdirSafe(pagesDir)) {
+		if (!/^page-\d{3}\.json$/.test(name)) continue;
+		const id = name.replace(/\.json$/, "");
+		const page = readJson<MangaPage>(join(pagesDir, name));
+		if (!page) continue;
+		pages.push({
+			id,
+			index: page.index,
+			panels: page.panels.map((panel, index) => {
+				const file = `${id}/panel-${String(index + 1).padStart(2, "0")}.png`;
+				const abs = join(pagesDir, file);
+				let version = 0;
+				try {
+					version = Math.floor(statSync(abs).mtimeMs);
+				} catch {
+					version = 0;
+				}
+				return { id: panel.id, file: `${slug}/${file}`, status: panel.image?.status ?? (version ? "done" : "pending"), version };
+			}),
+		});
+	}
+	pages.sort((a, b) => a.index - b.index);
+	return { pages };
+}
+
+function readdirSafe(path: string): string[] {
+	try {
+		return readdirSync(path);
+	} catch {
+		return [];
+	}
+}
+
+function projectSnapshot(store: ProjectStore): unknown {
+	const summary = pageSummary(store.root, store.project.slug);
+	return {
+		slug: store.project.slug,
+		title: store.project.title,
+		phase: store.state.phase,
+		revision: store.state.revision,
+		stats: store.state.stats,
+		style: { preset: store.project.style.preset, ratio: store.project.style.ratio },
+		...summary,
+	};
+}
+
+export async function startWebServer(options: WebServerOptions): Promise<WebServerHandle> {
+	const host = options.host ?? options.config.web.host ?? "127.0.0.1";
+	const basePort = options.port ?? options.config.web.port ?? 45871;
+	const needsToken = !isLoopback(host) && options.config.web.token !== "off";
+	const token = needsToken ? options.token ?? randomBytes(12).toString("hex") : undefined;
+	if (token) {
+		const tokenPath = join(options.cwd, options.config.workspace || ".automanga", "web-token.txt");
+		ensureDir(dirname(tokenPath));
+		writeAtomic(tokenPath, `${token}\n`);
+	}
+
+	let activeSlug: string | undefined;
+
+	const handler = (req: IncomingMessage, res: ServerResponse): void => {
+		void (async () => {
+			try {
+				const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+				if (req.method !== "GET" && req.method !== "HEAD") {
+					sendJson(res, 405, { error: "read only" });
+					return;
+				}
+				if (token) {
+					const cookies = parseCookies(req.headers.cookie);
+					const provided = url.searchParams.get("token") ?? cookies.mz_manga_token ?? req.headers.authorization?.replace(/^Bearer\s+/i, "");
+					if (provided !== token) {
+						res.writeHead(401, { "Content-Type": "text/plain; charset=utf-8", "WWW-Authenticate": "Bearer" });
+						res.end("401 Unauthorized：请使用终端打印的带 token 地址访问。\n");
+						return;
+					}
+					if (url.searchParams.get("token") === token) {
+						res.setHeader("Set-Cookie", `mz_manga_token=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800`);
+					}
+				}
+
+				if (url.pathname === "/" || url.pathname === "/index.html") {
+					serveFile(req, res, join(PUBLIC_DIR, "index.html"));
+					return;
+				}
+				if (url.pathname === "/app.js" || url.pathname === "/style.css") {
+					serveFile(req, res, join(PUBLIC_DIR, url.pathname.slice(1)));
+					return;
+				}
+				if (url.pathname === "/api/projects") {
+					sendJson(res, 200, { projects: listProjects(options.cwd, options.config) });
+					return;
+				}
+				if (url.pathname === "/api/project") {
+					activeSlug = url.searchParams.get("p") ?? activeSlug;
+					const store = ProjectStore.load(options.cwd, options.config, activeSlug);
+					activeSlug = store.project.slug;
+					sendJson(res, 200, projectSnapshot(store));
+					return;
+				}
+				if (url.pathname === "/api/events") {
+					const slug = url.searchParams.get("p") ?? activeSlug;
+					const store = ProjectStore.load(options.cwd, options.config, slug);
+					activeSlug = store.project.slug;
+					res.writeHead(200, {
+						"Content-Type": "text/event-stream; charset=utf-8",
+						"Cache-Control": "no-cache",
+						Connection: "keep-alive",
+						"X-Accel-Buffering": "no",
+					});
+					res.write("retry: 3000\n\n");
+					let lastRevision = -1;
+					const sendSnapshot = () => {
+						try {
+							const loaded = ProjectStore.loadByPath(store.root);
+							if (loaded.state.revision === lastRevision) return;
+							lastRevision = loaded.state.revision;
+							res.write(`event: snapshot\ndata: ${JSON.stringify(projectSnapshot(loaded))}\n\n`);
+						} catch {
+							// project may be temporarily mid-write; retry next tick
+						}
+					};
+					sendSnapshot();
+					const poll = setInterval(sendSnapshot, 1000);
+					const ping = setInterval(() => res.write(": ping\n\n"), 20000);
+					req.on("close", () => {
+						clearInterval(poll);
+						clearInterval(ping);
+					});
+					return;
+				}
+				const media = /^\/media\/([^/]+)\/(.+)$/.exec(url.pathname);
+				if (media) {
+					const slug = decodeURIComponent(media[1]);
+					const rel = decodeURIComponent(media[2]);
+					const store = ProjectStore.load(options.cwd, options.config, slug);
+					const abs = safeMediaPath(store.root, rel);
+					if (!abs) {
+						sendText(res, 404, "404 Not Found");
+						return;
+					}
+					serveFile(req, res, abs);
+					return;
+				}
+				sendText(res, 404, "404 Not Found");
+			} catch (error) {
+				sendText(res, 500, `500 ${error instanceof Error ? error.message : "error"}`);
+			}
+		})();
+	};
+
+	const server = createServer(handler);
+	const port = await listenWithFallback(server, basePort, host);
+	const displayHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+	const url = `http://${displayHost}:${port}${token ? `/?token=${token}` : ""}`;
+	const close = async () => {
+		await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+	};
+	return { server, url, host, port, token, close };
+}
+
+function listenWithFallback(server: Server, startPort: number, host: string): Promise<number> {
+	return new Promise((resolvePromise, reject) => {
+		let port = startPort;
+		let attempts = 0;
+		const tryListen = () => {
+			const onError = (error: NodeJS.ErrnoException) => {
+				if (error.code === "EADDRINUSE" && attempts < 20) {
+					attempts++;
+					port++;
+					setTimeout(tryListen, 30);
+					return;
+				}
+				reject(error);
+			};
+			server.once("error", onError);
+			server.listen(port, host, () => {
+				server.removeListener("error", onError);
+				const address = server.address();
+				resolvePromise(address && typeof address === "object" ? address.port : port);
+			});
+		};
+		tryListen();
+	});
+}

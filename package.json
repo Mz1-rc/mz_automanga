@@ -1,0 +1,23 @@
+{
+  "name": "mz_automanga",
+  "version": "0.1.0",
+  "description": "Multi-agent manga production pipeline for pi: script analysis, characters, storyboard, image generation and a read-only web preview.",
+  "type": "module",
+  "keywords": ["pi-package", "pi-extension", "manga", "comic", "agnes"],
+  "pi": {
+    "extensions": ["./extensions/mz-automanga.ts"]
+  },
+  "files": ["extensions", "src", "prompts", "README.md", "CHANGELOG.md", "design.md"],
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
+  },
+  "engines": {
+    "node": ">=22.6"
+  }
+}

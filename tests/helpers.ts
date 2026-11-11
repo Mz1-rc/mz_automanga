@@ -1,0 +1,123 @@
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { deflateSync } from "node:zlib";
+import { DEFAULT_CONFIG, type MangaConfig } from "../src/config.ts";
+import { createProject, ProjectStore, type ProjectStore as Store } from "../src/state.ts";
+import { makeStyle } from "../src/config.ts";
+import { crc32Update } from "../src/util/stream.ts";
+import type { PipelineUi } from "../src/pipeline.ts";
+
+export function tempDir(prefix = "mz-auto-"): string {
+	return mkdtempSync(join(tmpdir(), prefix));
+}
+
+export function testConfig(overrides: Partial<MangaConfig> = {}): MangaConfig {
+	return {
+		...structuredClone(DEFAULT_CONFIG),
+		...overrides,
+		image: { ...DEFAULT_CONFIG.image, ...(overrides.image ?? {}) },
+		agents: { ...DEFAULT_CONFIG.agents, ...(overrides.agents ?? {}) },
+		web: { ...DEFAULT_CONFIG.web, ...(overrides.web ?? {}) },
+		qa: { ...DEFAULT_CONFIG.qa, ...(overrides.qa ?? {}) },
+		memory: { ...DEFAULT_CONFIG.memory, ...(overrides.memory ?? {}) },
+		gates: { ...DEFAULT_CONFIG.gates, ...(overrides.gates ?? {}) },
+	};
+}
+
+export function makeTestProject(options: Partial<{ title: string; script: string; config: MangaConfig }> = {}): {
+	cwd: string;
+	store: Store;
+	config: MangaConfig;
+} {
+	const cwd = tempDir();
+	const config = options.config ?? testConfig();
+	mkdirSync(cwd, { recursive: true });
+	const store = createProject(cwd, {
+		title: options.title ?? "测试漫画",
+		style: makeStyle("manga-bw"),
+		script: options.script ?? "# 第一页\n林澈在天台等一个人。",
+		config,
+	});
+	return { cwd, store, config };
+}
+
+export function reloadStore(store: Store): Store {
+	return ProjectStore.loadByPath(store.root);
+}
+
+/** Minimal valid PNG (RGB, no interlace). */
+export function tinyPng(width = 8, height = 8): Buffer {
+	const raw = Buffer.alloc((width * 3 + 1) * height);
+	for (let y = 0; y < height; y++) {
+		const row = y * (width * 3 + 1);
+		raw[row] = 0;
+		for (let x = 0; x < width; x++) {
+			const off = row + 1 + x * 3;
+			raw[off] = 40 + x * 3;
+			raw[off + 1] = 60 + y * 3;
+			raw[off + 2] = 90;
+		}
+	}
+	const chunk = (type: string, data: Buffer): Buffer => {
+		const length = Buffer.alloc(4);
+		length.writeUInt32BE(data.length, 0);
+		const typeBuf = Buffer.from(type, "ascii");
+		const crcBuf = Buffer.alloc(4);
+		crcBuf.writeUInt32BE(crc32Update(crc32Update(0, typeBuf), data), 0);
+		return Buffer.concat([length, typeBuf, data, crcBuf]);
+	};
+	const ihdr = Buffer.alloc(13);
+	ihdr.writeUInt32BE(width, 0);
+	ihdr.writeUInt32BE(height, 4);
+	ihdr[8] = 8;
+	ihdr[9] = 2;
+	const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+	return Buffer.concat([signature, chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
+}
+
+export function writeTinyPng(path: string, width = 8, height = 8): void {
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, tinyPng(width, height));
+}
+
+export interface FakeUiState {
+	status: string[];
+	widget: string[][];
+	notes: string[];
+	answers: string[];
+	selectHandler?: (title: string, options: string[]) => string | undefined;
+}
+
+export function fakeUi(state: Partial<FakeUiState> = {}): PipelineUi & { state: FakeUiState } {
+	const merged: FakeUiState = {
+		status: [],
+		widget: [],
+		notes: [],
+		answers: [],
+		...state,
+	};
+	const ui: PipelineUi & { state: FakeUiState } = {
+		state: merged,
+		hasUI: false,
+		async select(title, options) {
+			return merged.selectHandler ? merged.selectHandler(title, options) : options[0];
+		},
+		async confirm() {
+			return true;
+		},
+		async input() {
+			return undefined;
+		},
+		async editor() {
+			return undefined;
+		},
+		notify(message) {
+			merged.notes.push(message);
+		},
+		updateStatus(_store, progress) {
+			if (progress) merged.status.push(progress);
+		},
+	};
+	return ui;
+}

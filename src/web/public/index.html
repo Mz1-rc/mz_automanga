@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-Hans">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>mz_automanga</title>
+		<link rel="stylesheet" href="/style.css" />
+	</head>
+	<body>
+		<header class="bar">
+			<div class="brand">mz_automanga</div>
+			<select id="project" title="项目"></select>
+			<div class="spacer"></div>
+			<div id="status" class="status">加载中…</div>
+		</header>
+		<main id="grid" class="grid" aria-live="polite"></main>
+		<div id="reader" class="reader" hidden>
+			<button class="nav prev" id="prev" aria-label="上一张">‹</button>
+			<img id="reader-image" alt="" />
+			<button class="nav next" id="next" aria-label="下一张">›</button>
+			<button class="close" id="close" aria-label="关闭">✕</button>
+		</div>
+		<script src="/app.js"></script>
+	</body>
+</html>
