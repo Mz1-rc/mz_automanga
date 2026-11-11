@@ -14,6 +14,49 @@ cd /root/mz_automanga && pi install ./
 
 依赖由 pi 宿主提供（`@earendil-works/pi-coding-agent`、`@earendil-works/pi-ai`、`@earendil-works/pi-tui`、`typebox`），无需 `npm install`。
 
+## 复制到项目的 `.pi`（不走 `pi install`）
+
+推荐把插件作为**独立包目录**放在项目扩展目录下（可被 `.pi/extensions/*/package.json` 自动发现）：
+
+```bash
+mkdir -p <项目>/.pi/extensions/mz_automanga
+cp -R /root/mz_automanga/extensions \
+      /root/mz_automanga/src \
+      /root/mz_automanga/prompts \
+      /root/mz_automanga/package.json \
+      <项目>/.pi/extensions/mz_automanga/
+```
+
+目录应为：
+
+```text
+<项目>/.pi/extensions/mz_automanga/
+├── package.json                 # pi.extensions 指向 ./extensions/mz-automanga.ts
+├── extensions/mz-automanga.ts   # 入口（必需）
+├── src/                         # 运行时代码 + Web 静态资源（必需）
+└── prompts/                     # 角色系统提示词（必需）
+```
+
+也可以平铺进 `.pi/`：
+
+```bash
+cp -R /root/mz_automanga/extensions /root/mz_automanga/src /root/mz_automanga/prompts <项目>/.pi/
+```
+
+此时为：
+
+```text
+<项目>/.pi/extensions/mz-automanga.ts
+<项目>/.pi/src/
+<项目>/.pi/prompts/
+```
+
+注意：**不要把 `package.json` 复制成 `<项目>/.pi/package.json`**；它会覆盖/干扰该目录的自动发现（实测会导致扩展不加载）。平铺方案不需要 `package.json`。
+
+必需文件只有：`extensions/mz-automanga.ts`、`src/**`、`prompts/**`。不需要复制 `tests/`、`design.md`、`README.md`、`CHANGELOG.md`、`.git`、`node_modules`（宿主提供 peer 依赖）。
+
+项目本地扩展需要项目信任：首次在 TUI 中确认，或用 `pi -a`。Agnes Key 不随插件复制，仍需 `AGNES_API_KEY` 或 `/manga key` 设置。
+
 ## 快速开始
 
 ```text
