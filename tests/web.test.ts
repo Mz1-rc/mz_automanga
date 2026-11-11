@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { makeTestProject, writeTinyPng } from "./helpers.ts";
+import { freePort, makeTestProject, writeTinyPng } from "./helpers.ts";
 import { startWebServer } from "../src/web/server.ts";
 
 function seed(store: ReturnType<typeof makeTestProject>["store"]) {
@@ -28,7 +28,8 @@ function seed(store: ReturnType<typeof makeTestProject>["store"]) {
 test("web server serves projects, page summaries and images read-only", async () => {
 	const { cwd, store, config } = makeTestProject();
 	seed(store);
-	const handle = await startWebServer({ cwd, config, host: "127.0.0.1", port: 0 });
+	const port = await freePort();
+	const handle = await startWebServer({ cwd, config, host: "127.0.0.1", port });
 	try {
 		assert.match(handle.url, /^http:\/\/127\.0\.0\.1:\d+/);
 		const index = await fetch(`${handle.url}/`);
@@ -75,7 +76,8 @@ test("non-loopback binding requires a token", async () => {
 	config.web.token = "auto";
 	let handle;
 	try {
-		handle = await startWebServer({ cwd, config, host: "0.0.0.0", port: 0 });
+		const port = await freePort();
+		handle = await startWebServer({ cwd, config, host: "0.0.0.0", port });
 	} catch {
 		return; // environment cannot bind 0.0.0.0; token flow is covered by unit logic
 	}
@@ -90,10 +92,27 @@ test("non-loopback binding requires a token", async () => {
 	}
 });
 
+test("server refuses port 0 and busy ports instead of picking another port", async () => {
+	const { cwd, store, config } = makeTestProject();
+	seed(store);
+	await assert.rejects(
+		startWebServer({ cwd, config, host: "127.0.0.1", port: 0 }),
+		/端口必须在 1–65535/,
+	);
+	const port = await freePort();
+	const handle = await startWebServer({ cwd, config, host: "127.0.0.1", port });
+	try {
+		await assert.rejects(startWebServer({ cwd, config, host: "127.0.0.1", port }), /已被占用/);
+	} finally {
+		await handle.close();
+	}
+});
+
 test("SSE sends a snapshot event on connect", async () => {
 	const { cwd, store, config } = makeTestProject();
 	seed(store);
-	const handle = await startWebServer({ cwd, config, host: "127.0.0.1", port: 0 });
+	const port = await freePort();
+	const handle = await startWebServer({ cwd, config, host: "127.0.0.1", port });
 	const controller = new AbortController();
 	try {
 		const response = await fetch(`${handle.url}/api/events?p=${store.project.slug}`, { signal: controller.signal });

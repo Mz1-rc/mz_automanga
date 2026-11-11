@@ -413,6 +413,32 @@ export interface RoleRunResult {
 	thinkingLevel?: string;
 }
 
+export interface RunStatus {
+	/** Background job label, e.g. "推进下一阶段". */
+	label?: string;
+	/** Job start time (epoch ms) for elapsed display. */
+	startedAt?: number;
+	/** Job end time (epoch ms); freezes elapsed after completion. */
+	endedAt?: number;
+	/** Current phase label, e.g. "生成画面". */
+	stage?: string;
+	/** Current role or action, e.g. "提示词美术". */
+	role?: string;
+	/** Last progress detail, e.g. "page-002/panel-03 · 读取 pages/page-002.json". */
+	detail?: string;
+	/** Current step within a loop. */
+	step?: number;
+	total?: number;
+	/** Last tool call observed in a nested session. */
+	lastTool?: string;
+	/** Read-only preview URL, when the web server is running. */
+	webUrl?: string;
+	/** True when the job has finished (successfully or not). */
+	done?: boolean;
+	/** Job error message, if any. */
+	error?: string;
+}
+
 export interface StageRecord {
 	status: "pending" | "running" | "done" | "failed" | "skipped";
 	attempts: number;

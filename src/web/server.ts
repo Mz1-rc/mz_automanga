@@ -201,7 +201,10 @@ function projectSnapshot(store: ProjectStore): unknown {
 
 export async function startWebServer(options: WebServerOptions): Promise<WebServerHandle> {
 	const host = options.host ?? options.config.web.host ?? "127.0.0.1";
-	const basePort = options.port ?? options.config.web.port ?? 45871;
+	const basePort = options.port ?? options.config.web.port;
+	if (!Number.isInteger(basePort) || basePort < 1 || basePort > 65535) {
+		throw new Error("Web 端口必须在 1–65535 之间且不能为 0；请用 --port 手动指定。");
+	}
 	const needsToken = !isLoopback(host) && options.config.web.token !== "off";
 	const token = needsToken ? options.token ?? randomBytes(12).toString("hex") : undefined;
 	if (token) {
@@ -304,7 +307,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
 	};
 
 	const server = createServer(handler);
-	const port = await listenWithFallback(server, basePort, host);
+	const port = await listenOnce(server, basePort, host);
+	server.unref();
 	const displayHost = host === "0.0.0.0" ? "127.0.0.1" : host;
 	const url = `http://${displayHost}:${port}${token ? `/?token=${token}` : ""}`;
 	const close = async () => {
@@ -313,27 +317,19 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
 	return { server, url, host, port, token, close };
 }
 
-function listenWithFallback(server: Server, startPort: number, host: string): Promise<number> {
+function listenOnce(server: Server, port: number, host: string): Promise<number> {
 	return new Promise((resolvePromise, reject) => {
-		let port = startPort;
-		let attempts = 0;
-		const tryListen = () => {
-			const onError = (error: NodeJS.ErrnoException) => {
-				if (error.code === "EADDRINUSE" && attempts < 20) {
-					attempts++;
-					port++;
-					setTimeout(tryListen, 30);
-					return;
-				}
-				reject(error);
-			};
-			server.once("error", onError);
-			server.listen(port, host, () => {
-				server.removeListener("error", onError);
-				const address = server.address();
-				resolvePromise(address && typeof address === "object" ? address.port : port);
-			});
+		const onError = (error: NodeJS.ErrnoException) => {
+			if (error.code === "EADDRINUSE") {
+				reject(new Error(`端口 ${port} 已被占用。请先停止占用进程，或用 /manga web start --port <其他端口>。`));
+				return;
+			}
+			reject(error);
 		};
-		tryListen();
+		server.once("error", onError);
+		server.listen(port, host, () => {
+			server.removeListener("error", onError);
+			resolvePromise(port);
+		});
 	});
 }

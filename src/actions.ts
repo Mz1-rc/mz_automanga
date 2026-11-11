@@ -8,7 +8,7 @@ import { MangaPipeline, gateIdForPhase, isRole, roleForPhase, roleLabel, pipelin
 import { listProjects, ProjectStore } from "./state.ts";
 import { readScriptInput } from "./script-input.ts";
 import type { RoleId, StylePreset, StyleSelection } from "./types.ts";
-import { updateStatus, notify, phaseLabel } from "./ui.ts";
+import { updateStatus, notify, phaseLabel, formatDuration } from "./ui.ts";
 import { startWebServer, type WebServerHandle } from "./web/server.ts";
 
 export interface ActionCtx {
@@ -47,14 +47,14 @@ interface AppLike {
 
 let webHandle: WebServerHandle | undefined;
 
-export function stopWebServer(): void {
+export async function stopWebServer(): Promise<void> {
 	if (!webHandle) return;
 	const handle = webHandle;
 	webHandle = undefined;
-	void handle.close().catch(() => undefined);
+	await handle.close().catch(() => undefined);
 }
 
-function uiFor(ctx: ActionCtx): PipelineUi {
+function uiFor(ctx: ActionCtx, app: AppLike): PipelineUi {
 	return {
 		hasUI: ctx.hasUI,
 		select: (title, options) => ctx.ui.select(title, options),
@@ -62,8 +62,15 @@ function uiFor(ctx: ActionCtx): PipelineUi {
 		input: (title, placeholder) => ctx.ui.input(title, placeholder),
 		editor: (title, prefill) => ctx.ui.editor(title, prefill ?? ""),
 		notify: (message, type) => ctx.ui.notify(message, type),
-		updateStatus: (store, progress, usage) => updateStatus(ctx as never, store, progress, usage),
+		updateStatus: (store, status, usage) => {
+			if (status) app.updateJobStatus(status);
+			updateStatus(ctx as never, store, { ...app.statusSnapshot(), webUrl: webHandle?.url }, usage);
+		},
 	};
+}
+
+function refreshStatus(ctx: ActionCtx, app: AppLike, store: ProjectStore): void {
+	updateStatus(ctx as never, store, { ...app.statusSnapshot(), webUrl: webHandle?.url });
 }
 
 export function resolveModelFor(ctx: ActionCtx, id?: string): unknown {
@@ -82,7 +89,7 @@ function makePipeline(ctx: ActionCtx, app: AppLike, store: ProjectStore, config:
 	return new MangaPipeline({
 		store,
 		config,
-		ui: uiFor(ctx),
+		ui: uiFor(ctx, app),
 		agentDir: app.agentDir,
 		signal,
 		resolveModel: (id) => resolveModelFor(ctx, id),
@@ -107,7 +114,8 @@ function startBackground(
 				notify(ctx as never, error instanceof Error ? error.message : String(error), "error");
 			}
 		} finally {
-			updateStatus(ctx as never, store);
+			pipeline.finishStatus();
+			refreshStatus(ctx, app, store);
 		}
 	});
 	return `⏳ 已启动后台任务：${label}。使用 /manga status 查看进度。`;
@@ -201,20 +209,32 @@ export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput)
 		`已创建《${store.project.title}》（${store.project.style.label}，${store.project.style.ratio}，${scriptInput.files.length} 个输入文件）。运行 /manga next 开始剧本分析。`,
 		"info",
 	);
-	updateStatus(ctx as never, store);
+	refreshStatus(ctx, app, store);
 	return store;
 }
 
 export function actionStatus(ctx: ActionCtx, app: AppLike): string {
 	try {
 		const { store } = app.ensure(ctx.cwd);
-		updateStatus(ctx as never, store);
+		refreshStatus(ctx, app, store);
+		const job = app.statusSnapshot();
 		const lines = [
 			pipelineSummary(store),
 			`画风：${store.project.style.label} · ${store.project.style.ratio} · ${store.project.style.preset}`,
 			`目录：${store.root}`,
-			webHandle ? `Web：${webHandle.url}` : "Web：未启动（/manga web）",
+			webHandle ? `Web：${webHandle.url}（${webHandle.host}:${webHandle.port}）` : "Web：未启动（/manga web start --port <端口>）",
 		];
+		if (job) {
+			const end = job.done ? (job.endedAt ?? Date.now()) : Date.now();
+			const elapsed = job.startedAt ? formatDuration(end - job.startedAt) : "";
+			const step = job.step && job.total ? ` · ${job.step}/${job.total}` : "";
+			lines.push(
+				`任务：${job.label}${job.done ? "（已结束）" : "（运行中）"}${elapsed ? ` · ${elapsed}` : ""}${job.stage ? ` · ${job.stage}` : ""}${job.role ? ` · ${job.role}` : ""}${step}`,
+			);
+			if (job.detail) lines.push(`当前：${job.detail}`);
+			if (job.lastTool) lines.push(`最近工具：${job.lastTool}`);
+			if (job.error) lines.push(`任务错误：${job.error}`);
+		}
 		if (store.state.pendingQuestions?.length) {
 			lines.push(`待确认问题：${store.state.pendingQuestions.length}（运行 /manga next）`);
 		}
@@ -270,14 +290,14 @@ export function actionRevise(ctx: ActionCtx, app: AppLike, feedback: string): st
 export function actionPause(ctx: ActionCtx, app: AppLike): string {
 	const { store } = app.ensure(ctx.cwd);
 	store.pause();
-	updateStatus(ctx as never, store);
+	refreshStatus(ctx, app, store);
 	return "已暂停。使用 /manga resume 恢复。";
 }
 
 export function actionResume(ctx: ActionCtx, app: AppLike): string {
 	const { store } = app.ensure(ctx.cwd);
 	store.resume();
-	updateStatus(ctx as never, store);
+	refreshStatus(ctx, app, store);
 	return `已恢复：${phaseLabel(store.state.phase)}。`;
 }
 
@@ -290,38 +310,75 @@ export function actionAbort(ctx: ActionCtx, app: AppLike): string {
 // web
 // ---------------------------------------------------------------------------
 
+export interface WebActionOptions {
+	/** start | stop | status | restart */
+	action?: "start" | "stop" | "status" | "restart";
+	host?: string;
+	port?: number;
+	open?: boolean;
+	noToken?: boolean;
+}
+
+export function actionWebStatus(): string {
+	if (!webHandle) return "Web 预览未启动。使用 /manga web start --port <1–65535> 启动。";
+	return `Web 预览运行中：${webHandle.url}\n绑定：${webHandle.host}:${webHandle.port}${webHandle.token ? `\ntoken 已写入工作区 state/web-token.txt` : ""}`;
+}
+
 export async function actionWeb(
 	ctx: ActionCtx,
 	app: AppLike,
 	pi: { exec?: (command: string, args: string[], options?: unknown) => Promise<unknown> },
-	options: { host?: string; port?: number; open?: boolean; noToken?: boolean } = {},
+	options: WebActionOptions = {},
 ): Promise<string> {
+	const action = options.action ?? "start";
+	if (action === "status") return actionWebStatus();
+	if (action === "stop") {
+		if (!webHandle) return "Web 预览未启动。";
+		const url = webHandle.url;
+		await stopWebServer();
+		try {
+			const { store } = app.ensure(ctx.cwd, undefined);
+			refreshStatus(ctx, app, store);
+		} catch {
+			// no project: nothing to repaint
+		}
+		return `已停止 Web 预览（原地址 ${url}）。`;
+	}
+	if (action === "restart" && webHandle) {
+		await stopWebServer();
+	}
+
 	let config = app.baseConfig();
+	let store: ProjectStore | undefined;
 	try {
-		config = app.ensure(ctx.cwd).config;
+		({ store, config } = app.ensure(ctx.cwd));
 	} catch {
 		// no project yet: use global config
 	}
+	const host = options.host ?? config.web.host;
+	const port = options.port ?? config.web.port;
+	if (!Number.isInteger(port) || port < 1 || port > 65535) {
+		throw new Error("Web 端口必须手动指定：/manga web start --port <1–65535>。不会随机分配，也不会自动换端口。");
+	}
 	if (options.noToken) {
 		config = { ...config, web: { ...config.web, token: "off" } };
-		const host = options.host ?? config.web.host;
 		if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
 			notify(ctx as never, "已关闭 token：同一网络内任何人都能看到剧本与画面。请仅在可信网络使用。", "warning");
 		}
 	}
 	if (webHandle) {
+		const current = `${webHandle.host}:${webHandle.port}`;
+		if (webHandle.port !== port || webHandle.host !== host) {
+			throw new Error(`Web 已在 ${current} 运行。请先 /manga web stop，或用 /manga web restart --port <端口>。`);
+		}
 		if (options.open) await openBrowser(pi, webHandle.url);
 		return `Web 预览已在运行：${webHandle.url}`;
 	}
-	const handle = await startWebServer({
-		cwd: ctx.cwd,
-		config,
-		host: options.host ?? config.web.host,
-		port: options.port ?? config.web.port,
-	});
+	const handle = await startWebServer({ cwd: ctx.cwd, config, host, port });
 	webHandle = handle;
 	if (options.open ?? config.web.open) await openBrowser(pi, handle.url);
-	return `Web 预览：${handle.url}`;
+	if (store) refreshStatus(ctx, app, store);
+	return `Web 预览：${handle.url}\n绑定：${handle.host}:${handle.port}`;
 }
 
 async function openBrowser(
@@ -459,7 +516,7 @@ export async function actionStyle(ctx: ActionCtx, app: AppLike, presetArg?: stri
 	store.state.previousPhase = null;
 	store.state.pendingFeedback = null;
 	store.saveState();
-	updateStatus(ctx as never, store);
+	refreshStatus(ctx, app, store);
 	return `画风已切换为 ${style.label}（${style.ratio}）。需要重新运行 /manga next 从企划开始。`;
 }
 
@@ -505,15 +562,25 @@ export async function actionModels(ctx: ActionCtx, app: AppLike, roleArg?: strin
 }
 
 export async function actionKey(ctx: ActionCtx, app: AppLike, options: { key?: string; test?: boolean } = {}): Promise<string> {
+	let config = app.baseConfig();
+	let resolved: ReturnType<typeof resolveAgnesKey>;
+	try {
+		resolved = resolveAgnesKey(config, app.agentDir);
+	} catch (error) {
+		resolved = undefined;
+		notify(ctx as never, error instanceof Error ? error.message : String(error), "warning");
+	}
 	let key = options.key?.trim();
-	if (!key && ctx.hasUI) {
+	if (!key && !resolved && ctx.hasUI) {
 		notify(ctx as never, "注意：输入内容会回显。更安全的做法是设置环境变量 AGNES_API_KEY。", "warning");
 		key = (await ctx.ui.input("Agnes API Key", ""))?.trim();
 	}
-	if (key) saveAgnesKey(app.agentDir, key);
-	const config = app.baseConfig();
-	const resolved = resolveAgnesKey(config, app.agentDir);
-	if (!resolved) throw new Error("尚未设置 Agnes API Key");
+	if (key) {
+		saveAgnesKey(app.agentDir, key);
+		config = app.baseConfig();
+		resolved = resolveAgnesKey(config, app.agentDir);
+	}
+	if (!resolved) throw new Error("尚未设置 Agnes API Key。设置 AGNES_API_KEY，或运行 /manga key 输入。");
 	if (!options.test) return `已保存 API Key（${maskKey(resolved.key)}，来自 ${resolved.source === "env" ? "环境变量" : "配置文件"}）。`;
 	const client = new AgnesClient({
 		baseUrl: config.agnes.baseUrl,
@@ -566,7 +633,7 @@ export function actionOpen(ctx: ActionCtx, app: AppLike, slug?: string): string 
 			.join("\n");
 	}
 	const { store } = app.ensure(ctx.cwd, slug);
-	updateStatus(ctx as never, store);
+	refreshStatus(ctx, app, store);
 	return `已切换到《${store.project.title}》（${store.project.slug}）。`;
 }
 

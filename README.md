@@ -24,7 +24,7 @@ cd /root/mz_automanga && pi install ./
 /manga key            # 第一次出图前设置 Agnes API Key
 /manga next           # 推进：剧本分析
 /manga status
-/manga web --host 0.0.0.0
+/manga web start --port 45871 --host 0.0.0.0
 ```
 
 典型流程：
@@ -60,7 +60,7 @@ init
 | `/manga approve [意见]` | 通过当前闸门并继续 |
 | `/manga revise <意见>` | 按意见重做当前闸门产物 |
 | `/manga pause` / `/manga resume` / `/manga abort` | 暂停 / 恢复 / 中止 |
-| `/manga web [--host H] [--port N] [--open] [--no-token]` | 启动只读预览 |
+| `/manga web start\|stop\|status\|restart --port <端口> [--host H] [--open] [--no-token]` | 开关只读预览；端口不会随机分配 |
 | `/manga regen <page-001/panel-01> [--note "更暗"] [--final]` | 重画单格 |
 | `/manga cast [--regen]` | 查看/重生成角色立绘 |
 | `/manga prompt <page-001/panel-01>` | 查看最终提示词 |
@@ -78,6 +78,19 @@ init
 角色 id：`script_analyst`、`director`、`character_designer`、`storyboard`、`prompt_artist`、`editor`、`repairer`。
 
 主 agent 也可以调用 `manga_team` 工具（`executionMode: "sequential"`，耗时动作后台启动后立即返回）。
+
+## 后台状态
+
+运行期间底部状态栏显示：标题、阶段、角色、进度、token、耗时、Web 开关；编辑区上方的面板显示：
+
+- 四道闸门状态；
+- 进度条与 `step/total`；
+- 当前动作（例如 `page-002/panel-03 · 读取 pages/page-002.json`）；
+- 输入/输出 token、费用、耗时；
+- Web 地址或“未启动”；
+- 待确认问题与最近错误。
+
+`/manga status` 会额外显示任务标签、是否已结束、最近工具调用与任务错误。
 
 ## 输出
 
@@ -128,7 +141,9 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
 
 ## Web 预览
 
-- 默认 `127.0.0.1:45871`；`--host 0.0.0.0` 允许局域网访问。
+- 端口必须手动指定：`--port <1–65535>`，或在配置里显式设置 `web.port`。**没有默认随机端口，也不会在占用时自动加 1**；未指定或被占用会直接报错。
+- `/manga web start --port 45871`、`/manga web stop`、`/manga web status`、`/manga web restart --port 45871`。`web.port` 默认为 0（未配置），此时必须带 `--port`。
+- 默认 `127.0.0.1`；`--host 0.0.0.0` 允许局域网访问。
 - 非回环绑定默认强制 token，终端会打印带 token 的完整地址；`--no-token` 显式关闭并告警。
 - 只读：项目选择 + 图片网格 + 单页阅读；不提供任何写接口，不叠加气泡（文字已在 PNG 里）。
 - 图片直接流式返回，支持 Range/ETag；服务端不缓存图片字节。
@@ -163,7 +178,7 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
 ## 测试
 
 ```bash
-node --experimental-strip-types --test tests/*.test.ts
+node --experimental-strip-types --test tests/*.test.ts   # 32 个用例
 ```
 
 测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering 校验、Agnes 重试与流式下载上限、Web 路由/鉴权/SSE/Range、CBZ、完整流水线与缓存跳过。

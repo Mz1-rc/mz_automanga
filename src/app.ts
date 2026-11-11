@@ -1,19 +1,22 @@
 import { loadGlobalConfig, projectConfig, type MangaConfig } from "./config.ts";
 import { createProject, listProjects, ProjectStore, type ProjectSummary } from "./state.ts";
-import type { StyleSelection } from "./types.ts";
+import type { RunStatus, StyleSelection } from "./types.ts";
 
 export interface BackgroundJob {
 	label: string;
 	startedAt: number;
 	controller: AbortController;
 	done: boolean;
+	endedAt?: number;
 	error?: string;
+	status: RunStatus;
 }
 
 export class MangaApp {
 	active?: ProjectStore;
 	readonly agentDir: string;
 	currentJob?: BackgroundJob;
+	lastJob?: BackgroundJob;
 	currentAbort?: AbortController;
 
 	constructor(agentDir: string) {
@@ -60,8 +63,15 @@ export class MangaApp {
 	startJob(label: string, runner: (controller: AbortController) => Promise<void>): BackgroundJob {
 		if (this.isBusy()) throw new Error(this.busyMessage());
 		const controller = new AbortController();
-		const job: BackgroundJob = { label, startedAt: Date.now(), controller, done: false };
+		const job: BackgroundJob = {
+			label,
+			startedAt: Date.now(),
+			controller,
+			done: false,
+			status: { label, startedAt: Date.now() },
+		};
 		this.currentJob = job;
+		this.lastJob = job;
 		this.currentAbort = controller;
 		void (async () => {
 			try {
@@ -70,6 +80,8 @@ export class MangaApp {
 				job.error = error instanceof Error ? error.message : String(error);
 			} finally {
 				job.done = true;
+				job.endedAt = Date.now();
+				job.status = { ...job.status, done: true, endedAt: job.endedAt, error: job.error };
 				if (this.currentJob === job) this.currentJob = undefined;
 				if (this.currentAbort === controller) this.currentAbort = undefined;
 			}
@@ -82,5 +94,19 @@ export class MangaApp {
 		this.currentAbort.abort();
 		this.currentAbort = undefined;
 		return true;
+	}
+
+	/** Merge live progress into the current (or most recent) background job. */
+	updateJobStatus(patch: RunStatus): void {
+		const job = this.currentJob ?? this.lastJob;
+		if (!job) return;
+		job.status = { ...job.status, ...patch, label: job.label, startedAt: job.startedAt };
+	}
+
+	/** Snapshot for the TUI status panel and /manga status. */
+	statusSnapshot(): RunStatus | undefined {
+		const job = this.currentJob ?? this.lastJob;
+		if (!job) return undefined;
+		return { ...job.status, done: job.done, endedAt: job.endedAt ?? job.status.endedAt, error: job.error };
 	}
 }

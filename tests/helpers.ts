@@ -1,4 +1,5 @@
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { deflateSync } from "node:zlib";
@@ -7,6 +8,17 @@ import { createProject, ProjectStore, type ProjectStore as Store } from "../src/
 import { makeStyle } from "../src/config.ts";
 import { crc32Update } from "../src/util/stream.ts";
 import type { PipelineUi } from "../src/pipeline.ts";
+
+/** Reserve a concrete port for tests (startWebServer refuses port 0). */
+export async function freePort(): Promise<number> {
+	const server = createServer();
+	await new Promise<void>((resolvePromise) => server.listen(0, "127.0.0.1", () => resolvePromise()));
+	const address = server.address();
+	const port = address && typeof address === "object" ? address.port : 0;
+	await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+	if (!port) throw new Error("无法分配测试端口");
+	return port;
+}
 
 export function tempDir(prefix = "mz-auto-"): string {
 	return mkdtempSync(join(tmpdir(), prefix));

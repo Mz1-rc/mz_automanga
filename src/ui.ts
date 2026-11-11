@@ -1,4 +1,4 @@
-import type { MangaProject, Phase, RunUsage, ProjectState } from "./types.ts";
+import type { MangaProject, Phase, ProjectState, RunStatus, RunUsage } from "./types.ts";
 
 export const STATUS_KEY = "mz-automanga";
 export const WIDGET_KEY = "mz-automanga";
@@ -87,10 +87,25 @@ function gateMark(state: ProjectState, gate: keyof ProjectState["gates"]): strin
 	return state.gates[gate]?.status === "approved" ? "✔" : "○";
 }
 
+export function formatDuration(ms: number | undefined): string {
+	const total = Math.max(0, Math.floor((ms ?? 0) / 1000));
+	const seconds = total % 60;
+	const minutes = Math.floor(total / 60) % 60;
+	const hours = Math.floor(total / 3600);
+	const pad = (value: number) => String(value).padStart(2, "0");
+	return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${pad(minutes)}:${pad(seconds)}`;
+}
+
+function shortText(text: string | undefined, max = 120): string | undefined {
+	if (!text) return undefined;
+	const oneLine = text.replace(/\s+/g, " ").trim();
+	return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine;
+}
+
 export function updateStatus(
 	ctx: UiContext,
 	store: { project: MangaProject; state: ProjectState },
-	progress?: string,
+	status?: RunStatus,
 	activeUsage?: RunUsage,
 ): void {
 	const { project, state } = store;
@@ -101,25 +116,47 @@ export function updateStatus(
 	};
 	const images = state.stats.images;
 	const panels = Math.max(state.stats.panels, images);
-	const extra = progress ? ` · ${progress}` : "";
-	ctx.ui.setStatus(
-		STATUS_KEY,
-		`🎬 ${project.title} · ${phaseLabel(state.phase)} · 图 ${images}/${panels || "?"} · Σ${formatTokens(total.input + total.output)} tok${extra}`,
-	);
+	const end = status?.done ? (status.endedAt ?? Date.now()) : Date.now();
+	const elapsed = status?.startedAt ? formatDuration(end - status.startedAt) : undefined;
+	const stepText = status?.step && status.total ? `${status.step}/${status.total}` : undefined;
+	const stage = status?.stage ?? phaseLabel(state.phase);
+	const role = status?.role;
+
+	// Footer: one compact line with the most useful live numbers.
+	const footer = [
+		`🎬 ${project.title}`,
+		status?.done ? `${stage}（已结束）` : stage,
+		role,
+		stepText ? `进度 ${stepText}` : panels ? `图 ${images}/${panels}` : undefined,
+		`Σ${formatTokens(total.input + total.output)} tok`,
+		elapsed ? `⏱ ${elapsed}` : undefined,
+		status?.webUrl ? "Web ●" : "Web ○",
+	]
+		.filter(Boolean)
+		.join(" · ");
+	ctx.ui.setStatus(STATUS_KEY, footer);
 
 	const lines: string[] = [];
 	lines.push(
 		`${gateMark(state, "script")} 剧本   ${gateMark(state, "cast")} 角色   ${gateMark(state, "storyboard")} 分镜   ${gateMark(state, "final")} 成品`,
 	);
+	const barTotal = status?.total ?? panels;
+	const barDone = status?.step ?? images;
 	lines.push(
-		`${progressBar(images, panels)}  ${images}/${panels || "?"} · ${phaseLabel(state.phase)}`,
+		`${progressBar(barDone, barTotal)}  ${barDone}/${barTotal || "?"} · ${stage}${role ? ` · ${role}` : ""}${elapsed ? ` · ${elapsed}` : ""}`,
 	);
+	const detail = shortText(status?.detail);
+	if (detail) lines.push(`当前：${detail}`);
 	const cost = formatCost(total.cost);
 	lines.push(
-		`Token：入 ${formatTokens(total.input)} / 出 ${formatTokens(total.output)}${cost ? ` · ${cost}` : ""}${activeUsage ? ` · 当前 ${formatTokens((activeUsage.input ?? 0) + (activeUsage.output ?? 0))}` : ""}`,
+		`Token：入 ${formatTokens(total.input)} / 出 ${formatTokens(total.output)}${cost ? ` · ${cost}` : ""}${elapsed ? ` · 耗时 ${elapsed}` : ""}`,
 	);
-	if (progress) lines.push(progress);
-	if (state.lastError?.message) lines.push(`⚠ ${state.lastError.message}`);
+	if (status?.webUrl) lines.push(`Web：${status.webUrl}`);
+	else lines.push("Web：未启动（/manga web start --port <端口>）");
+	if (state.pendingQuestions?.length && !["done", "paused"].includes(state.phase)) {
+		lines.push(`待确认：${state.pendingQuestions.length} 个剧本问题（/manga next）`);
+	}
+	if (state.lastError?.message) lines.push(`⚠ ${shortText(state.lastError.message, 100)}`);
 	ctx.ui.setWidget(WIDGET_KEY, lines);
 }
 

@@ -33,7 +33,7 @@ export default function mzAutomangaExtension(pi: ExtensionAPI): void {
 	pi.on("session_tree", async (_event, ctx) => refresh(ctx));
 	pi.on("session_shutdown", async (_event, ctx) => {
 		app.abortCurrent();
-		stopWebServer();
+		await stopWebServer();
 		try {
 			app.active?.releaseLock();
 		} catch {

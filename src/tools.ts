@@ -26,6 +26,7 @@ import {
 	actionStep,
 	actionStyle,
 	actionWeb,
+	actionWebStatus,
 } from "./actions.ts";
 import type { MangaApp } from "./app.ts";
 
@@ -39,6 +40,8 @@ const ACTIONS = [
 	"approve",
 	"revise",
 	"web",
+	"web_stop",
+	"web_status",
 	"regen_panel",
 	"prompt_panel",
 	"cast",
@@ -59,8 +62,11 @@ const ACTIONS = [
 
 const HELP = `manga_team 动作：
 init / status / next / step / run_all / run_role / approve / revise
-web / regen_panel / prompt_panel / cast / qa / style / configure / set_auto
-pause / resume / abort / doctor / open / rollback / export / list`;
+web / web_stop / web_status / regen_panel / prompt_panel / cast / qa
+style / configure / set_auto / pause / resume / abort / doctor / open
+rollback / export / list
+
+web 需要显式端口（--port），不会随机分配。`;
 
 function text(value: string, details: Record<string, unknown> = {}) {
 	return { content: [{ type: "text" as const, text: value }], details };
@@ -96,7 +102,10 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 			final: Type.Optional(Type.Boolean({ description: "regen_panel 是否用最终尺寸" })),
 			feedback: Type.Optional(Type.String({ description: "approve / revise 的意见" })),
 			host: Type.Optional(Type.String({ description: "web 绑定地址，如 0.0.0.0" })),
-			port: Type.Optional(Type.Number({ description: "web 端口" })),
+			port: Type.Optional(Type.Number({ description: "web 端口（1–65535），必须显式指定，不会随机分配" })),
+			web_action: Type.Optional(
+				StringEnum(["start", "stop", "status", "restart"], { description: "web 子动作，默认 start" }),
+			),
 			model: Type.Optional(Type.String({ description: "configure 的模型 provider/id" })),
 			auto: Type.Optional(Type.Boolean({ description: "set_auto 开启/关闭全自动" })),
 			run_id: Type.Optional(Type.String({ description: "rollback 的运行快照 id" })),
@@ -144,7 +153,17 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 					return text(actionRevise(actionCtx, app, params.feedback));
 				}
 				case "web":
-					return text(await actionWeb(actionCtx, app, pi, { host: params.host, port: params.port }));
+					return text(
+						await actionWeb(actionCtx, app, pi, {
+							action: params.web_action ?? "start",
+							host: params.host,
+							port: params.port,
+						}),
+					);
+				case "web_stop":
+					return text(await actionWeb(actionCtx, app, pi, { action: "stop" }));
+				case "web_status":
+					return text(actionWebStatus());
 				case "regen_panel": {
 					if (!params.page || !params.panel) throw new Error("regen_panel 需要 page 和 panel");
 					return text(actionRegen(actionCtx, app, `${params.page}/${params.panel}`, params.note, params.final));

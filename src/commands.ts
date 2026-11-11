@@ -90,7 +90,7 @@ const HELP = `mz_automanga · 多 Agent 漫画流水线
   /manga run <role>        运行指定角色
   /manga approve [意见]    通过当前闸门
   /manga revise <意见>     按意见重做当前闸门产物
-  /manga web [--host H] [--port N] [--open]
+  /manga web [start|stop|status|restart] --port <端口> [--host H] [--open] [--no-token]
   /manga regen <page-001/panel-01> [--note "更暗"] [--final]
   /manga cast [--regen]    查看/重生成角色立绘
   /manga prompt <page-001/panel-01>
@@ -170,9 +170,14 @@ export async function handleMangaCommand(
 				ctx.ui.notify(actionAbort(ctx, app), "info");
 				return;
 			case "web":
-			case "preview":
+			case "preview": {
+				const webAction = (rest || "start").toLowerCase();
+				if (!["start", "stop", "status", "restart"].includes(webAction)) {
+					throw new Error("用法：/manga web [start|stop|status|restart] --port <端口> [--host H] [--open] [--no-token]");
+				}
 				ctx.ui.notify(
 					await actionWeb(ctx, app, pi, {
+						action: webAction as "start" | "stop" | "status" | "restart",
 						host: str(flags, "host"),
 						port: str(flags, "port") ? Number(str(flags, "port")) : undefined,
 						open: bool(flags, "open") ? true : undefined,
@@ -181,6 +186,7 @@ export async function handleMangaCommand(
 					"info",
 				);
 				return;
+			}
 			case "regen":
 				if (!rest) throw new Error("用法：/manga regen <page-001/panel-01> [--note ...]");
 				ctx.ui.notify(actionRegen(ctx, app, rest.split(/\s+/)[0], str(flags, "note"), bool(flags, "final")), "info");

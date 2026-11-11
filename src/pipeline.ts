@@ -7,6 +7,7 @@ import { resolveAgnesKey } from "./keys.ts";
 import { generateCharacterImages, generatePanelImages, regeneratePanel } from "./images.ts";
 import { readJson, readText, resolveWithin, writeAtomic, writeJsonAtomic, ensureDir, fileExists, nowIso } from "./paths.ts";
 import { buildSystemPrompt, buildTaskPrompt } from "./prompts.ts";
+import { phaseLabel } from "./ui.ts";
 import { recordAssumptions, runReviewGate, runScriptGate as runScriptGateUi, questionsNeedingUser, gatePolicy } from "./gates.ts";
 import type { GateUi } from "./gates.ts";
 import type { ProjectStore } from "./state.ts";
@@ -21,6 +22,7 @@ import type {
 	RoleId,
 	RoleRunOptions,
 	RoleRunResult,
+	RunStatus,
 	RunUsage,
 	ScriptAnalysis,
 } from "./types.ts";
@@ -29,7 +31,7 @@ import { ROLE_IDS } from "./types.ts";
 export type RoleRunner = (options: RoleRunOptions) => Promise<RoleRunResult>;
 
 export interface PipelineUi extends GateUi {
-	updateStatus(store: ProjectStore, progress?: string, activeUsage?: RunUsage): void;
+	updateStatus(store: ProjectStore, status?: RunStatus, activeUsage?: RunUsage): void;
 }
 
 export interface PipelineOptions {
@@ -70,14 +72,6 @@ function emptyUsage(): RunUsage {
 	return { input: 0, output: 0, total: 0, cost: 0 };
 }
 
-function addUsage(total: RunUsage, usage: RunUsage | undefined): void {
-	if (!usage) return;
-	total.input += usage.input;
-	total.output += usage.output;
-	total.total = (total.total ?? 0) + (usage.total ?? usage.input + usage.output);
-	total.cost = (total.cost ?? 0) + (usage.cost ?? 0);
-}
-
 export class MangaPipeline {
 	readonly store: ProjectStore;
 	readonly config: MangaConfig;
@@ -89,6 +83,12 @@ export class MangaPipeline {
 	private client?: AgnesClient;
 	private lastReport = 0;
 	private activeUsage = emptyUsage();
+	private runStage?: string;
+	private runRole?: string;
+	private runStep?: number;
+	private runTotal?: number;
+	private runDetail?: string;
+	private lastTool?: string;
 
 	constructor(options: PipelineOptions) {
 		this.store = options.store;
@@ -123,9 +123,28 @@ export class MangaPipeline {
 			}
 			const message = error instanceof Error ? error.message : String(error);
 			this.store.markError(message);
-			this.ui.updateStatus(this.store);
+			this.runStage = "出错";
+			this.runRole = undefined;
+			this.runDetail = message;
+			this.runStep = undefined;
+			this.runTotal = undefined;
+			this.ui.updateStatus(this.store, this.status(), this.activeUsage);
 			throw error;
+		} finally {
+			this.finishStatus();
 		}
+	}
+
+	/** Public so command-initiated stages can repaint a clean final status. */
+	finishStatus(): void {
+		this.runStage = phaseLabel(this.store.phase);
+		this.runRole = undefined;
+		this.runDetail = undefined;
+		this.runStep = undefined;
+		this.runTotal = undefined;
+		this.lastTool = undefined;
+		this.activeUsage = emptyUsage();
+		this.ui.updateStatus(this.store, this.status(), this.activeUsage);
 	}
 
 	private async dispatch(): Promise<void> {
@@ -253,6 +272,7 @@ export class MangaPipeline {
 	// ---------------------------------------------------------------------
 
 	async runScriptAnalysis(feedback?: string): Promise<void> {
+		this.beginStage("剧本分析", "剧本分析师");
 		await this.locked("script_analyst", async () => {
 			const result = await this.runRoleWithRetry("script_analyst", {
 				targets: roleTargets("script_analyst"),
@@ -280,6 +300,7 @@ export class MangaPipeline {
 	}
 
 	private async runScriptGate(): Promise<void> {
+		this.beginStage("剧本确认");
 		const analysis = this.store.readAnalysis();
 		if (!analysis) throw new Error("找不到 analysis.json，请先运行 /manga next 重试剧本分析");
 		const decision = await runScriptGateUi({
@@ -314,6 +335,7 @@ export class MangaPipeline {
 	// ---------------------------------------------------------------------
 
 	async runDirector(feedback?: string): Promise<void> {
+		this.beginStage("企划 / 角色设定", "导演");
 		await this.locked("director", async () => {
 			const result = await this.runRoleWithRetry("director", {
 				targets: ["bible.json"],
@@ -326,6 +348,7 @@ export class MangaPipeline {
 	}
 
 	async runCharacterDesigner(feedback?: string): Promise<void> {
+		this.beginStage("角色设计", "角色设计师");
 		await this.locked("character_designer", async () => {
 			const bible = this.store.readBible();
 			const result = await this.runRoleWithRetry("character_designer", {
@@ -339,6 +362,7 @@ export class MangaPipeline {
 	}
 
 	async runCharacterImages(force = false, onlyId?: string): Promise<void> {
+		this.beginStage("生成角色立绘");
 		await this.locked("code", async () => {
 			const run = this.store.beginRun("code", "character_images", { note: "角色立绘" });
 			try {
@@ -366,6 +390,7 @@ export class MangaPipeline {
 	}
 
 	private async runCastGate(): Promise<void> {
+		this.beginStage("角色确认");
 		const bible = this.store.readBible();
 		const summary = [
 			`角色：${(bible?.cast ?? []).map((member) => `${member.name}(${member.id})`).join("、")}`,
@@ -397,6 +422,7 @@ export class MangaPipeline {
 	// ---------------------------------------------------------------------
 
 	async runStoryboard(feedback?: string, force = false): Promise<void> {
+		this.beginStage("分镜", "分镜师");
 		await this.locked("storyboard", async () => {
 			const analysis = this.store.readAnalysis();
 			if (!analysis) throw new Error("找不到 analysis.json，无法分镜");
@@ -412,7 +438,7 @@ export class MangaPipeline {
 					completed++;
 					continue;
 				}
-				this.report(`分镜 ${pageId}（${index}/${total}）`);
+				this.report(`分镜 ${pageId}`, { step: index, total });
 				const result = await this.runRoleWithRetry("storyboard", {
 					pageIndex: index,
 					pageId,
@@ -429,6 +455,7 @@ export class MangaPipeline {
 	}
 
 	private async runStoryboardGate(): Promise<void> {
+		this.beginStage("分镜确认");
 		const pages = this.store.listPageKeys();
 		const summary = [
 			`共 ${pages.length} 页，${this.store.state.stats.panels} 格。`,
@@ -456,6 +483,7 @@ export class MangaPipeline {
 	}
 
 	async runPrompts(feedback?: string, force = false): Promise<void> {
+		this.beginStage("提示词 / lettering", "提示词美术");
 		await this.locked("prompt_artist", async () => {
 			const keys = this.store.listPageKeys();
 			const fb = feedback ?? this.takeFeedback();
@@ -468,7 +496,7 @@ export class MangaPipeline {
 					this.report(`提示词 ${key} 已存在，跳过`);
 					continue;
 				}
-				this.report(`提示词 ${key}（${index + 1}/${keys.length}）`);
+				this.report(`提示词 ${key}`, { step: index + 1, total: keys.length });
 				const result = await this.runRoleWithRetry("prompt_artist", {
 					pageIndex: page.index,
 					pageId: key,
@@ -488,6 +516,7 @@ export class MangaPipeline {
 	// ---------------------------------------------------------------------
 
 	async runImageGen(force = false): Promise<void> {
+		this.beginStage("生成画面");
 		await this.locked("code", async () => {
 			const run = this.store.beginRun("code", "image_gen", { note: "分镜出图" });
 			try {
@@ -499,7 +528,7 @@ export class MangaPipeline {
 					force,
 					onProgress: (progress) => {
 						const suffix = progress.error ? ` · ${progress.error}` : "";
-						this.report(`${progress.label} ${progress.index}/${progress.total}${suffix}`);
+						this.report(`${progress.label}${suffix}`, { step: progress.index, total: progress.total });
 					},
 				});
 				this.store.finishRun(run.id, { status: "success" });
@@ -521,6 +550,7 @@ export class MangaPipeline {
 	// ---------------------------------------------------------------------
 
 	async runQa(): Promise<void> {
+		this.beginStage("审校");
 		await this.locked("code", async () => {
 			const run = this.store.beginRun("code", "qa", { note: "结构审校" });
 			try {
@@ -606,6 +636,7 @@ export class MangaPipeline {
 	}
 
 	async runRepair(): Promise<void> {
+		this.beginStage("修复", "修复师");
 		await this.locked("repairer", async () => {
 			const report = readJson<QaReport>(join(this.store.root, "qa", "report.json"));
 			if (!report || report.repairTargets.length === 0) {
@@ -651,6 +682,8 @@ export class MangaPipeline {
 	}
 
 	async regenerate(key: string, note?: string, final = false): Promise<void> {
+		this.beginStage("重画单格");
+		this.report(key);
 		await this.locked("code", async () => {
 			const result = await regeneratePanel({
 				store: this.store,
@@ -667,6 +700,7 @@ export class MangaPipeline {
 	}
 
 	async exportNow(): Promise<void> {
+		this.beginStage("导出 CBZ");
 		await this.locked("code", async () => {
 			const { exportCbz } = await import("./export.ts");
 			const result = await exportCbz({ store: this.store, chunkBytes: this.config.memory.zipChunkBytes });
@@ -679,6 +713,7 @@ export class MangaPipeline {
 	// ---------------------------------------------------------------------
 
 	async runBuild(): Promise<void> {
+		this.beginStage("构建 / 导出");
 		await this.locked("code", async () => {
 			const run = this.store.beginRun("code", "build", { note: "构建与导出" });
 			try {
@@ -704,6 +739,7 @@ export class MangaPipeline {
 	}
 
 	private async runFinalGate(): Promise<void> {
+		this.beginStage("成品确认");
 		const stats = this.store.state.stats;
 		const summary = [
 			`页数：${stats.pages} · 格数：${stats.panels} · 已出图：${stats.images} · 失败：${stats.failedImages}`,
@@ -769,6 +805,8 @@ export class MangaPipeline {
 		let lastIssues: string[] = [];
 		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 			if (this.signal?.aborted) throw new Error("已取消");
+			this.runRole = roleLabel(role);
+			this.runStage = this.runStage ?? phaseLabelForStage(this.store.phase);
 			const run = this.store.beginRun(role, this.store.phase, {
 				inputFiles: this.inputFilesFor(role, options.pageId),
 				note: attempt > 1 ? `第 ${attempt} 次尝试` : undefined,
@@ -810,8 +848,8 @@ export class MangaPipeline {
 					signal: this.signal,
 					onProgress: (update) => this.onRoleProgress(update),
 				});
-				addUsage(this.activeUsage, result.usage);
 				const page = options.pageIndex ? this.store.readPage(options.pageIndex) : undefined;
+				this.activeUsage = emptyUsage();
 				const validation = validateRoleOutputs({
 					role,
 					projectRoot: this.store.root,
@@ -879,17 +917,47 @@ export class MangaPipeline {
 		return feedback;
 	}
 
-	private report(text: string): void {
+	private status(extra: RunStatus = {}): RunStatus {
+		return {
+			stage: this.runStage,
+			role: this.runRole,
+			step: this.runStep,
+			total: this.runTotal,
+			detail: this.runDetail,
+			lastTool: this.lastTool,
+			...extra,
+		};
+	}
+
+	private beginStage(stage: string, role?: string): void {
+		this.runStage = stage;
+		this.runRole = role;
+		this.runStep = undefined;
+		this.runTotal = undefined;
+		this.runDetail = undefined;
+		this.lastTool = undefined;
+		this.ui.updateStatus(this.store, this.status(), this.activeUsage);
+	}
+
+	private report(detail: string, extra: RunStatus = {}): void {
+		this.runDetail = detail;
+		if (extra.step !== undefined) this.runStep = extra.step;
+		if (extra.total !== undefined) this.runTotal = extra.total;
 		const now = Date.now();
 		if (now - this.lastReport < 350) return;
 		this.lastReport = now;
-		this.ui.updateStatus(this.store, text, this.activeUsage);
+		this.ui.updateStatus(this.store, this.status(extra), this.activeUsage);
 	}
 
 	private onRoleProgress(update: ProgressUpdate): void {
-		if (update.kind === "text") this.report(update.detail ?? "生成中");
-		else if (update.kind === "tool") this.report(update.detail ?? update.toolName ?? "工具调用");
-		else if (update.kind === "usage") this.ui.updateStatus(this.store, undefined, this.activeUsage);
+		if (update.kind === "text") {
+			this.report(update.detail ?? "生成中");
+		} else if (update.kind === "tool") {
+			this.lastTool = update.toolName;
+			this.report(update.detail ?? update.toolName ?? "工具调用", { lastTool: update.toolName });
+		} else if (update.kind === "usage") {
+			this.ui.updateStatus(this.store, this.status(), this.activeUsage);
+		}
 	}
 
 	private resolveModel(role: RoleId): unknown {
@@ -979,6 +1047,27 @@ export function roleLabel(role: RoleId): string {
 
 export function isRole(value: string): value is RoleId {
 	return (ROLE_IDS as readonly string[]).includes(value);
+}
+
+function phaseLabelForStage(phase: Phase): string {
+	switch (phase) {
+		case "script_analysis":
+			return "剧本分析";
+		case "design":
+			return "企划 / 角色设定";
+		case "cast":
+			return "角色设计";
+		case "storyboard":
+			return "分镜";
+		case "prompts":
+			return "提示词 / lettering";
+		case "qa":
+			return "审校";
+		case "repair":
+			return "修复";
+		default:
+			return String(phase);
+	}
 }
 
 function messageOf(error: unknown): string {

@@ -75,7 +75,8 @@ export const DEFAULT_GATES: Record<GateId, GatePolicy> = {
 
 export const DEFAULT_WEB: WebConfig = {
 	host: "127.0.0.1",
-	port: 45871,
+	// 0 means "not configured": the web server requires an explicit port.
+	port: 0,
 	token: "auto",
 	open: true,
 };
@@ -151,7 +152,8 @@ export function normalizeConfig(config: MangaConfig): MangaConfig {
 	config.memory.webCacheBytes = clamp(config.memory.webCacheBytes, 256 * 1024, 32 * 1024, 4 * 1024 * 1024);
 	config.memory.previewChars = clamp(config.memory.previewChars, 160, 40, 800);
 	config.memory.zipChunkBytes = clamp(config.memory.zipChunkBytes, 1024 * 1024, 64 * 1024, 8 * 1024 * 1024);
-	config.web.port = clamp(config.web.port, 45871, 1024, 65535);
+	const port = Number(config.web.port);
+	config.web.port = Number.isInteger(port) && port >= 0 && port <= 65535 ? port : 0;
 	if (!config.agents.overrides || typeof config.agents.overrides !== "object") config.agents.overrides = {};
 	for (const role of ROLE_IDS) {
 		const override = config.agents.overrides[role];

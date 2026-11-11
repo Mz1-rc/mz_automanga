@@ -21,7 +21,7 @@
 - 已实现：嵌套 `AgentSession` 单飞运行器、`save_artifact` 白名单与快照、hash 缓存/续跑、Agnes 流式下载与重试、只读 Web（网格 + 单页，token/0.0.0.0）。
 - 预留（未实现）：视觉 QA（`qa.vision` 目前只记录，不调用视觉模型）、TUI 内真图预览、PDF 导出、Web 写操作。
 - 实测：真实模型跑通“剧本 → 分析 → 澄清 → bible → 角色 → 3 页 15 格分镜 → 15 格 lettering 提示词”；用 mock Agnes 跑通出图、QA、CBZ 与 Web（15/15 done）。
-- 测试：31 个用例通过（状态/锁、工件与 schema、lettering 校验、Agnes 重试与流式上限、Web 路由/鉴权/SSE/Range、CBZ、完整流水线与缓存跳过、剧本文件/目录读取）。
+- 测试：32 个用例通过（状态/锁、工件与 schema、lettering 校验、Agnes 重试与流式上限、Web 路由/鉴权/SSE/Range、CBZ、完整流水线与缓存跳过、剧本文件/目录读取）。
 
 ### v0.2（已确认）
 
@@ -479,7 +479,7 @@ mz_automanga/
       "script_analyst": { "thinkingLevel": "high" }
     }
   },
-  "web": { "host": "127.0.0.1", "port": 45871, "token": "auto", "open": true },
+  "web": { "host": "127.0.0.1", "port": 45871, "token": "auto", "open": true },  // port=0 时必须用 --port
   "qa": { "vision": false, "repairRounds": 1 },
   "memory": {
     "logRotateBytes": 2097152,
@@ -1158,12 +1158,13 @@ export async function runRole(options: RoleRunOptions): Promise<RoleRunResult> {
 
 ### 9.1 启动与绑定
 
-- `/manga web [--port N] [--host H] [--open] [--no-token]`
+- `/manga web start --port <端口> [--host H] [--open] [--no-token]`
+- `/manga web stop` / `/manga web status` / `/manga web restart --port <端口>`
 - 默认 `host: 127.0.0.1`；`--host 0.0.0.0` 允许局域网访问（按你的要求支持）。
+- **端口必须手动指定**：启动时必须提供 `--port`，或在配置中显式设置 `web.port`（默认 0 表示未配置）。**不会随机分配，也不会在占用时自动加 1**；未指定或被占用直接报错并提示换端口。
 - **非回环地址默认强制 token**：启动时生成 24 字符随机 token，写入 `state/web-token.txt`（0600），同时在终端打印完整 URL（含 `?token=`）。
 - 首次带 token 的请求写入 HttpOnly、SameSite=Strict cookie；后续静态资源与 SSE 沿用。
 - `--no-token` 可显式关闭，但会打印警告（“同一网络内任何人都能看到你的剧本和画面”）。
-- 端口占用时向上尝试最多 20 个；实际地址显示在状态栏。
 - `session_shutdown` → `server.close()`；`server.unref()` 不阻塞退出。
 
 ### 9.2 路由（全部只读，只服务图片）
@@ -1231,7 +1232,7 @@ export async function runRole(options: RoleRunOptions): Promise<RoleRunResult> {
 | `/manga approve [意见]` | 通过当前闸门并继续 |
 | `/manga revise <意见>` | 带意见重跑当前闸门的产出角色 |
 | `/manga status` | 阶段、页/格、闸门、当前任务、token、Web 地址 |
-| `/manga web [--host H] [--port N] [--open] [--no-token]` | 启动/显示预览服务 |
+| `/manga web start\|stop\|status\|restart --port <端口> [--host H] [--open] [--no-token]` | 开关/查看预览服务；端口不会随机分配 |
 | `/manga regen <page> <panel> [--note "…"] [--final]` | 重生成单格 |
 | `/manga style [preset]` | 查看/切换画风（会提示影响范围） |
 | `/manga cast [<id>] [--regen]` | 查看/重生成角色立绘（可只重生成一个） |
@@ -1327,7 +1328,7 @@ startJob(label, runner): BackgroundJob {
   "image": { "draftSize": "1K", "finalSize": "2K", "maxRefs": 4, "usePreviousPanel": true, "keepVersions": 3 },
   "agents": { "thinkingLevel": "medium", "timeoutMs": 600000, "maxAttempts": 2, "overrides": {} },
   "gates": { "script": "auto", "cast": "always", "storyboard": "always", "final": "always" },
-  "web": { "host": "127.0.0.1", "port": 45871, "token": "auto", "open": true },
+  "web": { "host": "127.0.0.1", "port": 45871, "token": "auto", "open": true },  // port=0 时必须用 --port
   "qa": { "vision": false, "repairRounds": 1 }
 }
 ```
@@ -1441,7 +1442,7 @@ no watermark, no signature, no text other than the specified lettering
 | `init-dir.test.ts` | 目录输入创建项目、标题取目录名、`source/inputs.json` 清单 |
 | `artifacts.test.ts` | 白名单、禁止目标、JSON 校验、原子写、快照；analysis/bible/page schema；lettering 原文/字数/气泡 |
 | `agnes.test.ts` | payload 结构、URL/b64 两条路径、429 退避、401/400 中止、超时、下载字节上限、流式写入 |
-| `web.test.ts` | 路由、SSE 首帧、token 401、路径穿越、只读 405、媒体 Range |
+| `web.test.ts` | 路由、SSE 首帧、token 401、路径穿越、只读 405、媒体 Range、拒绝端口 0/占用端口 |
 | `export.test.ts` | CBZ 条目、顺序、EOCD |
 | `pipeline.e2e.test.ts` | `FakeRoleRunner` + `mock-agnes` 全流程；缓存跳过；剧本闸门“按假设继续” |
 
@@ -1502,7 +1503,7 @@ no watermark, no signature, no text other than the specified lettering
 | 模型 | 跟随宿主当前模型；可用 `/manga models` 逐角色覆盖 |
 | 出图 | 1K 草稿，`--final` 为 2K；串行；URL 输出 + 流式下载 |
 | 视觉 QA | v0.2 预留；v0.1 只做结构 QA（代码，零 token） |
-| Web | 只读，只显示图片；网格 + 单页阅读；无叠加、无编辑 |
+| Web | 只读，只显示图片；网格 + 单页阅读；`start/stop/status/restart`；端口必须手动指定，不随机 |
 
 若实现中发现这些默认值与 Agnes 的实际文字能力冲突（例如 14 字经常糊），我会先停下来用实测结果向你报告，而不是静默改设计。
 
@@ -1670,7 +1671,7 @@ cd /root/mz_automanga && pi install ./
 /manga init --script ./my-script.md      # 或 --script ./chapters/
 # 选择画风 → 剧本分析 → 如有关键问题会逐条询问
 /manga next
-/manga web --host 0.0.0.0
+/manga web start --port 45871 --host 0.0.0.0
 # 用终端打印的带 token 地址访问
 ```
 
