@@ -88,7 +88,6 @@ export interface AgentConfig {
 export interface WebConfig {
 	host: string;
 	port: number;
-	token: "auto" | "off";
 	open: boolean;
 }
 

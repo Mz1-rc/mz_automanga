@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DEFAULT_CONFIG, DEFAULT_WEB, normalizeConfig } from "../src/config.ts";
 import { freePort, makeTestProject, writeTinyPng } from "./helpers.ts";
 import { startWebServer } from "../src/web/server.ts";
 
@@ -110,23 +111,36 @@ test("web server serves projects, page summaries and images read-only", async ()
 	}
 });
 
-test("non-loopback binding requires a token", async () => {
+test("legacy web token config migrates to the no-auth 0.0.0.0 default", () => {
+	const legacy = structuredClone(DEFAULT_CONFIG) as typeof DEFAULT_CONFIG & { web: { token?: string } };
+	legacy.web.host = "127.0.0.1";
+	legacy.web.token = "auto";
+	const normalized = normalizeConfig(legacy);
+	assert.equal(normalized.web.host, "0.0.0.0");
+	assert.equal("token" in normalized.web, false);
+});
+
+test("web defaults to 0.0.0.0, has no token, and rejects every mutation method", async () => {
+	assert.equal(DEFAULT_WEB.host, "0.0.0.0");
 	const { cwd, store, config } = makeTestProject();
 	seed(store);
-	config.web.token = "auto";
 	let handle;
 	try {
 		const port = await freePort();
 		handle = await startWebServer({ cwd, config, host: "0.0.0.0", port });
 	} catch {
-		return; // environment cannot bind 0.0.0.0; token flow is covered by unit logic
+		return; // environment cannot bind 0.0.0.0; the config default is asserted above
 	}
 	try {
-		assert.ok(handle.token);
-		const unauthorized = await fetch(`http://127.0.0.1:${handle.port}/api/projects`);
-		assert.equal(unauthorized.status, 401);
-		const authorized = await fetch(`http://127.0.0.1:${handle.port}/api/projects?token=${handle.token}`);
-		assert.equal(authorized.status, 200);
+		const local = `http://127.0.0.1:${handle.port}`;
+		assert.equal("token" in handle, false);
+		assert.equal((await fetch(`${local}/api/projects`)).status, 200);
+		for (const method of ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"]) {
+			const response = await fetch(`${local}/api/projects`, { method });
+			assert.equal(response.status, 405, `${method} must be rejected`);
+			assert.equal(response.headers.get("allow"), "GET, HEAD");
+		}
+		assert.equal(existsSync(join(cwd, ".automanga", "web-token.txt")), false);
 	} finally {
 		await handle.close();
 	}

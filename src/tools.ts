@@ -101,7 +101,7 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 			note: Type.Optional(Type.String({ description: "regen_panel 的额外方向" })),
 			final: Type.Optional(Type.Boolean({ description: "regen_panel 是否用最终尺寸" })),
 			feedback: Type.Optional(Type.String({ description: "approve / revise 的意见" })),
-			host: Type.Optional(Type.String({ description: "web 绑定地址，如 0.0.0.0" })),
+			host: Type.Optional(Type.String({ description: "web 绑定地址；默认 0.0.0.0（只读、无鉴权）" })),
 			port: Type.Optional(Type.Number({ description: "web 端口（1–65535），必须显式指定，不会随机分配" })),
 			web_action: Type.Optional(
 				StringEnum(["start", "stop", "status", "restart"], { description: "web 子动作，默认 start" }),

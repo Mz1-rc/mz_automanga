@@ -2,21 +2,22 @@ import { createReadStream, existsSync, readdirSync, realpathSync, statSync } fro
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomBytes } from "node:crypto";
 import type { MangaConfig } from "../config.ts";
-import { ensureDir, readJson, resolveWithin, writeAtomic } from "../paths.ts";
+import { readJson, resolveWithin } from "../paths.ts";
 import { listProjects, ProjectStore } from "../state.ts";
 import type { Bible, MangaPage } from "../types.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(HERE, "public");
 
+/** Hard read-only boundary: no request may mutate project state or files. */
+const READ_ONLY_METHODS = new Set(["GET", "HEAD"]);
+
 export interface WebServerOptions {
 	cwd: string;
 	config: MangaConfig;
 	host?: string;
 	port?: number;
-	token?: string;
 	signal?: AbortSignal;
 }
 
@@ -25,12 +26,7 @@ export interface WebServerHandle {
 	url: string;
 	host: string;
 	port: number;
-	token?: string;
 	close(): Promise<void>;
-}
-
-function isLoopback(host: string): boolean {
-	return host === "127.0.0.1" || host === "localhost" || host === "::1";
 }
 
 function contentType(path: string): string {
@@ -53,17 +49,6 @@ function contentType(path: string): string {
 		default:
 			return "application/octet-stream";
 	}
-}
-
-function parseCookies(header: string | undefined): Record<string, string> {
-	const out: Record<string, string> = {};
-	if (!header) return out;
-	for (const part of header.split(";")) {
-		const index = part.indexOf("=");
-		if (index < 0) continue;
-		out[part.slice(0, index).trim()] = decodeURIComponent(part.slice(index + 1).trim());
-	}
-	return out;
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -238,17 +223,10 @@ function projectSnapshot(store: ProjectStore): unknown {
 }
 
 export async function startWebServer(options: WebServerOptions): Promise<WebServerHandle> {
-	const host = options.host ?? options.config.web.host ?? "127.0.0.1";
+	const host = options.host ?? options.config.web.host ?? "0.0.0.0";
 	const basePort = options.port ?? options.config.web.port;
 	if (!Number.isInteger(basePort) || basePort < 1 || basePort > 65535) {
 		throw new Error("Web 端口必须在 1–65535 之间且不能为 0；请用 --port 手动指定。");
-	}
-	const needsToken = !isLoopback(host) && options.config.web.token !== "off";
-	const token = needsToken ? options.token ?? randomBytes(12).toString("hex") : undefined;
-	if (token) {
-		const tokenPath = join(options.cwd, options.config.workspace || ".automanga", "web-token.txt");
-		ensureDir(dirname(tokenPath));
-		writeAtomic(tokenPath, `${token}\n`);
 	}
 
 	let activeSlug: string | undefined;
@@ -257,21 +235,12 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
 		void (async () => {
 			try {
 				const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-				if (req.method !== "GET" && req.method !== "HEAD") {
+				// Central framework-level guard. Every route below is read-only, and
+				// mutation verbs are rejected before touching the filesystem.
+				if (!READ_ONLY_METHODS.has(req.method ?? "")) {
+					res.setHeader("Allow", "GET, HEAD");
 					sendJson(res, 405, { error: "read only" });
 					return;
-				}
-				if (token) {
-					const cookies = parseCookies(req.headers.cookie);
-					const provided = url.searchParams.get("token") ?? cookies.mz_manga_token ?? req.headers.authorization?.replace(/^Bearer\s+/i, "");
-					if (provided !== token) {
-						res.writeHead(401, { "Content-Type": "text/plain; charset=utf-8", "WWW-Authenticate": "Bearer" });
-						res.end("401 Unauthorized：请使用终端打印的带 token 地址访问。\n");
-						return;
-					}
-					if (url.searchParams.get("token") === token) {
-						res.setHeader("Set-Cookie", `mz_manga_token=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800`);
-					}
 				}
 
 				if (url.pathname === "/" || url.pathname === "/index.html") {
@@ -348,11 +317,11 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
 	const port = await listenOnce(server, basePort, host);
 	server.unref();
 	const displayHost = host === "0.0.0.0" ? "127.0.0.1" : host;
-	const url = `http://${displayHost}:${port}${token ? `/?token=${token}` : ""}`;
+	const url = `http://${displayHost}:${port}`;
 	const close = async () => {
 		await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
 	};
-	return { server, url, host, port, token, close };
+	return { server, url, host, port, close };
 }
 
 function listenOnce(server: Server, port: number, host: string): Promise<number> {

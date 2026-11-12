@@ -67,7 +67,7 @@ cp -R /root/mz_automanga/extensions /root/mz_automanga/src /root/mz_automanga/pr
 /manga key            # 第一次出图前设置 Agnes API Key
 /manga next           # 推进：剧本分析
 /manga status
-/manga web start --port 45871 --host 0.0.0.0
+/manga web start --port 45871   # 默认绑定 0.0.0.0，只读、无鉴权
 ```
 
 典型流程：
@@ -103,7 +103,7 @@ init
 | `/manga approve [意见]` | 通过当前闸门并继续 |
 | `/manga revise <意见>` | 按意见重做当前闸门产物 |
 | `/manga pause` / `/manga resume` / `/manga abort` | 暂停 / 恢复 / 中止 |
-| `/manga web start\|stop\|status\|restart --port <端口> [--host H] [--open] [--no-token]` | 开关只读预览；端口不会随机分配 |
+| `/manga web start\|stop\|status\|restart --port <端口> [--host H] [--open]` | 开关只读预览；端口不会随机分配 |
 | `/manga regen <page-001/panel-01> [--note "更暗"] [--final]` | 重画单格 |
 | `/manga cast [--regen]` | 查看/重生成角色立绘 |
 | `/manga prompt <page-001/panel-01>` | 查看最终提示词 |
@@ -191,9 +191,9 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
 
 - 端口必须手动指定：`--port <1–65535>`，或在配置里显式设置 `web.port`。**没有默认随机端口，也不会在占用时自动加 1**；未指定或被占用会直接报错。
 - `/manga web start --port 45871`、`/manga web stop`、`/manga web status`、`/manga web restart --port 45871`。`web.port` 默认为 0（未配置），此时必须带 `--port`。
-- 默认 `127.0.0.1`；`--host 0.0.0.0` 允许局域网访问。
-- 非回环绑定默认强制 token，终端会打印带 token 的完整地址；`--no-token` 显式关闭并告警。
-- 只读：项目选择 + 漫画网格 + **角色人设图** + 单页阅读；不提供任何写接口，不叠加气泡（文字已在 PNG 里）。
+- 默认绑定 `0.0.0.0`，同一局域网可直接访问；可用 `--host 127.0.0.1` 限制为本机。
+- **无 token、无鉴权**。请只在可信网络使用，或显式绑定回环地址。
+- **框架层只读**：HTTP 方法白名单仅允许 `GET`/`HEAD`，其他方法在路由前直接返回 405 与 `Allow: GET, HEAD`；页面只提供项目选择、漫画网格、**角色人设图**、单页阅读，没有写接口、不叠加气泡（文字已在 PNG 里）。
 - 媒体地址为 `/media/<项目 slug>/<项目相对路径>`，中文 slug 与文件名会正确 URL 编码；页面快照中的路径自带 `pages/` 前缀。
 - 图片直接流式返回，支持 Range/ETag；服务端不缓存图片字节。
 
@@ -217,7 +217,7 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
   "image": { "draftSize": "1K", "finalSize": "2K", "maxRefs": 4 },
   "agents": { "thinkingLevel": "medium", "maxAttempts": 2 },
   "gates": { "script": "auto", "cast": "always", "storyboard": "always", "final": "always" },
-  "web": { "host": "127.0.0.1", "port": 45871, "token": "auto" },
+  "web": { "host": "0.0.0.0", "port": 45871, "open": true },
   "qa": { "vision": false, "repairRounds": 1 }
 }
 ```
@@ -227,10 +227,10 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
 ## 测试
 
 ```bash
-node --experimental-strip-types --test tests/*.test.ts   # 36 个用例
+node --experimental-strip-types --test tests/*.test.ts   # 37 个用例
 ```
 
-测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering 校验、黑白画风颜色锁与灰度兜底、Agnes 重试与流式下载上限、Web 路由/鉴权/SSE/Range/中文路径/人设图、CBZ、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过。
+测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering 校验、黑白画风颜色锁与灰度兜底、Agnes 重试与流式下载上限、Web 只读方法白名单/默认 0.0.0.0/SSE/Range/中文路径/人设图、CBZ、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过。
 
 ## 已知限制
 

@@ -323,12 +323,15 @@ export interface WebActionOptions {
 	host?: string;
 	port?: number;
 	open?: boolean;
-	noToken?: boolean;
 }
 
 export function actionWebStatus(): string {
 	if (!webHandle) return "Web 预览未启动。使用 /manga web start --port <1–65535> 启动。";
-	return `Web 预览运行中：${webHandle.url}\n绑定：${webHandle.host}:${webHandle.port}${webHandle.token ? `\ntoken 已写入工作区 state/web-token.txt` : ""}`;
+	return [
+		`Web 预览运行中：${webHandle.url}`,
+		`绑定：${webHandle.host}:${webHandle.port}`,
+		"模式：只读（仅 GET/HEAD，无写接口、无鉴权；同一网络内可访问）",
+	].join("\n");
 }
 
 export async function actionWeb(
@@ -367,12 +370,6 @@ export async function actionWeb(
 	if (!Number.isInteger(port) || port < 1 || port > 65535) {
 		throw new Error("Web 端口必须手动指定：/manga web start --port <1–65535>。不会随机分配，也不会自动换端口。");
 	}
-	if (options.noToken) {
-		config = { ...config, web: { ...config.web, token: "off" } };
-		if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
-			notify(ctx as never, "已关闭 token：同一网络内任何人都能看到剧本与画面。请仅在可信网络使用。", "warning");
-		}
-	}
 	if (webHandle) {
 		const current = `${webHandle.host}:${webHandle.port}`;
 		if (webHandle.port !== port || webHandle.host !== host) {
@@ -385,7 +382,7 @@ export async function actionWeb(
 	webHandle = handle;
 	if (options.open ?? config.web.open) await openBrowser(pi, handle.url);
 	if (store) refreshStatus(ctx, app, store);
-	return `Web 预览：${handle.url}\n绑定：${handle.host}:${handle.port}`;
+	return `Web 预览：${handle.url}\n绑定：${handle.host}:${handle.port}\n模式：只读（仅 GET/HEAD，无写接口、无鉴权；同一网络内可访问）`;
 }
 
 async function openBrowser(

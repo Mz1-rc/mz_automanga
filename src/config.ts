@@ -97,10 +97,11 @@ export const DEFAULT_GATES: Record<GateId, GatePolicy> = {
 };
 
 export const DEFAULT_WEB: WebConfig = {
-	host: "127.0.0.1",
+	// Read-only preview is reachable from the LAN by default. There is no
+	// authentication: the framework only exposes GET/HEAD routes.
+	host: "0.0.0.0",
 	// 0 means "not configured": the web server requires an explicit port.
 	port: 0,
-	token: "auto",
 	open: true,
 };
 
@@ -181,6 +182,17 @@ export function normalizeConfig(config: MangaConfig): MangaConfig {
 	for (const role of ROLE_IDS) {
 		const override = config.agents.overrides[role];
 		if (override && typeof override !== "object") delete config.agents.overrides[role];
+	}
+	// Drop the legacy token field from old config/project files; the read-only
+	// preview no longer has an authentication layer. A file that still carries
+	// `token` predates v0.5, so its old loopback default is migrated to the new
+	// 0.0.0.0 default as well.
+	const legacyWeb = config.web as WebConfig & { token?: unknown };
+	if ("token" in legacyWeb) {
+		delete legacyWeb.token;
+		if (legacyWeb.host === "127.0.0.1" || legacyWeb.host === "localhost" || legacyWeb.host === "::1") {
+			legacyWeb.host = "0.0.0.0";
+		}
 	}
 	return config;
 }

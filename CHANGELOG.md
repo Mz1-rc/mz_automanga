@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Web 移除 token/鉴权与 `--no-token`；默认绑定 `0.0.0.0`，旧配置的 `web.token` 自动清理。
+- 框架层强制 Web 只读：仅允许 `GET`/`HEAD`，其他方法在路由前返回 405 + `Allow: GET, HEAD`；测试逐个覆盖写方法。
+
 - 修复 `manga-bw` 仍生成彩色：画风串/negative 增加显式颜色锁，出图阶段兜底补全旧提示词，并对 PNG 做确定性灰度化。
 - Web 增加“人设”视图，展示 `characters/<id>/ref.png` 并支持大图阅读。
 - 子 agent 运行期间实时显示本角色 token 与上下文用量；`/manga status` 同步显示。

@@ -36,7 +36,7 @@ interface Parsed {
 	flags: Record<string, string | boolean>;
 }
 
-const BOOLEAN_FLAGS = new Set(["force", "final", "open", "regen", "test", "vision", "no-token", "no-export"]);
+const BOOLEAN_FLAGS = new Set(["force", "final", "open", "regen", "test", "vision", "no-export"]);
 const VALUE_FLAGS = new Set(["script", "dir", "title", "style", "custom", "ratio", "host", "port", "note", "key", "auto"]);
 
 export function parseArgs(input: string): Parsed {
@@ -90,7 +90,7 @@ const HELP = `mz_automanga · 多 Agent 漫画流水线
   /manga run <role>        运行指定角色
   /manga approve [意见]    通过当前闸门
   /manga revise <意见>     按意见重做当前闸门产物
-  /manga web [start|stop|status|restart] --port <端口> [--host H] [--open] [--no-token]
+  /manga web [start|stop|status|restart] --port <端口> [--host H] [--open]
   /manga regen <page-001/panel-01> [--note "更暗"] [--final]
   /manga cast [--regen]    查看/重生成角色立绘
   /manga prompt <page-001/panel-01>
@@ -173,7 +173,7 @@ export async function handleMangaCommand(
 			case "preview": {
 				const webAction = (rest || "start").toLowerCase();
 				if (!["start", "stop", "status", "restart"].includes(webAction)) {
-					throw new Error("用法：/manga web [start|stop|status|restart] --port <端口> [--host H] [--open] [--no-token]");
+					throw new Error("用法：/manga web [start|stop|status|restart] --port <端口> [--host H] [--open]");
 				}
 				ctx.ui.notify(
 					await actionWeb(ctx, app, pi, {
@@ -181,7 +181,6 @@ export async function handleMangaCommand(
 						host: str(flags, "host"),
 						port: str(flags, "port") ? Number(str(flags, "port")) : undefined,
 						open: bool(flags, "open") ? true : undefined,
-						noToken: bool(flags, "no-token"),
 					}),
 					"info",
 				);
