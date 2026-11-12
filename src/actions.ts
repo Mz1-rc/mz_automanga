@@ -8,7 +8,7 @@ import { MangaPipeline, gateIdForPhase, isRole, roleForPhase, roleLabel, pipelin
 import { listProjects, ProjectStore } from "./state.ts";
 import { readScriptInput } from "./script-input.ts";
 import type { RoleId, StylePreset, StyleSelection } from "./types.ts";
-import { updateStatus, notify, phaseLabel, formatDuration } from "./ui.ts";
+import { updateStatus, notify, phaseLabel, formatDuration, formatTokens } from "./ui.ts";
 import { startWebServer, type WebServerHandle } from "./web/server.ts";
 
 export interface ActionCtx {
@@ -63,7 +63,7 @@ function uiFor(ctx: ActionCtx, app: AppLike): PipelineUi {
 		editor: (title, prefill) => ctx.ui.editor(title, prefill ?? ""),
 		notify: (message, type) => ctx.ui.notify(message, type),
 		updateStatus: (store, status, usage) => {
-			if (status) app.updateJobStatus(status);
+			if (status) app.updateJobStatus({ ...status, usage: usage ? { ...usage } : undefined });
 			updateStatus(ctx as never, store, { ...app.statusSnapshot(), webUrl: webHandle?.url }, usage);
 		},
 	};
@@ -233,6 +233,13 @@ export function actionStatus(ctx: ActionCtx, app: AppLike): string {
 			);
 			if (job.detail) lines.push(`当前：${job.detail}`);
 			if (job.lastTool) lines.push(`最近工具：${job.lastTool}`);
+			if (job.usage && (job.usage.input || job.usage.output)) {
+				lines.push(`本角色 Token：入 ${formatTokens(job.usage.input)} / 出 ${formatTokens(job.usage.output)}`);
+			}
+			if (job.contextTokens !== undefined) {
+				const percent = job.contextPercent !== undefined ? ` · ${Math.round(job.contextPercent)}%` : "";
+				lines.push(`上下文：${formatTokens(job.contextTokens)}${percent}`);
+			}
 			if (job.error) lines.push(`任务错误：${job.error}`);
 		}
 		if (store.state.pendingQuestions?.length) {

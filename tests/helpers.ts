@@ -8,6 +8,7 @@ import { createProject, ProjectStore, type ProjectStore as Store } from "../src/
 import { makeStyle } from "../src/config.ts";
 import { crc32Update } from "../src/util/stream.ts";
 import type { PipelineUi } from "../src/pipeline.ts";
+import type { RunStatus, RunUsage } from "../src/types.ts";
 
 /** Reserve a concrete port for tests (startWebServer refuses port 0). */
 export async function freePort(): Promise<number> {
@@ -94,10 +95,11 @@ export function writeTinyPng(path: string, width = 8, height = 8): void {
 }
 
 export interface FakeUiState {
-	status: string[];
+	status: RunStatus[];
 	widget: string[][];
 	notes: string[];
 	answers: string[];
+	usages: RunUsage[];
 	selectHandler?: (title: string, options: string[]) => string | undefined;
 }
 
@@ -107,6 +109,7 @@ export function fakeUi(state: Partial<FakeUiState> = {}): PipelineUi & { state: 
 		widget: [],
 		notes: [],
 		answers: [],
+		usages: [],
 		...state,
 	};
 	const ui: PipelineUi & { state: FakeUiState } = {
@@ -127,8 +130,9 @@ export function fakeUi(state: Partial<FakeUiState> = {}): PipelineUi & { state: 
 		notify(message) {
 			merged.notes.push(message);
 		},
-		updateStatus(_store, progress) {
+		updateStatus(_store, progress, usage) {
 			if (progress) merged.status.push(progress);
+			if (usage) merged.usages.push({ ...usage });
 		},
 	};
 	return ui;

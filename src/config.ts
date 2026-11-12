@@ -27,7 +27,7 @@ export const STYLE_PRESETS: Record<Exclude<StylePreset, "custom">, { label: stri
 		label: "黑白漫画",
 		ratio: "3:4",
 		prompt:
-			"modern seinen manga, clean confident lineart, screentone shading, high contrast, cinematic composition",
+			"modern seinen manga drawn strictly in black and white, pure monochrome ink lineart, screentone dot shading, high contrast, no color at all, no colored lighting, cinematic composition",
 	},
 	"manhua-color": {
 		label: "全彩国漫",
@@ -45,6 +45,29 @@ export const STYLE_PRESETS: Record<Exclude<StylePreset, "custom">, { label: stri
 
 export const LETTERING_STYLE =
 	"clean black comic lettering, rounded white speech bubbles with thin black outlines";
+
+/**
+ * Explicit color lock for monochrome presets. Image models often read
+ * "seinen manga" as a color style, so every request repeats the color policy.
+ */
+export const MONOCHROME_LOCK =
+	"COLOR LOCK: strict black-and-white monochrome artwork only — every surface, skin, hair, clothing, background and light is rendered in black, white and grey screentone; absolutely no color, no colored accents, no sepia, no blue or orange tint";
+
+const MONOCHROME_NEGATIVE = [
+	"color",
+	"full color",
+	"colored",
+	"chromatic colors",
+	"saturated colors",
+	"colored lighting",
+	"sepia",
+	"blue tint",
+	"orange tint",
+];
+
+export function isMonochromeStyle(style: StyleSelection): boolean {
+	return style.preset === "manga-bw";
+}
 
 export const DEFAULT_IMAGE: ImageConfig = {
 	model: "agnes-image-2.5-flash",
@@ -226,11 +249,48 @@ export function styleBasePrompt(style: StyleSelection): string {
 export function composeStylePrompt(style: StyleSelection): string {
 	return [
 		styleBasePrompt(style),
+		isMonochromeStyle(style) ? MONOCHROME_LOCK : undefined,
 		LETTERING_STYLE,
 		`${style.lockedTokens.join(", ")}`,
 	]
 		.filter(Boolean)
 		.join(", ");
+}
+
+/**
+ * Code-level style enforcement. Agents are supposed to copy the style block,
+ * but a missing or stale block must never silently produce a color image for a
+ * black-and-white project. This appends the color lock and full style block
+ * only when they are absent, so prompts sent to Agnes always carry them.
+ */
+export function enforceStylePrompt(prompt: string, style: StyleSelection): string {
+	const core = prompt.trim();
+	if (!isMonochromeStyle(style)) return core;
+	const lower = core.toLowerCase();
+	const additions: string[] = [];
+	if (!/black[\s-]*and[\s-]*white|monochrome|greyscale|grayscale/.test(lower)) {
+		additions.push("RENDER IN STRICT BLACK AND WHITE (monochrome ink, grey screentone, no color)");
+	}
+	if (!lower.includes("no color")) {
+		additions.push("convert every reference-sheet color to grey tone; no color anywhere in the image");
+	}
+	const styleBlock = composeStylePrompt(style);
+	if (!lower.includes(styleBasePrompt(style).toLowerCase()) || !lower.includes("no text other than the specified lettering")) {
+		additions.push(styleBlock);
+	}
+	if (additions.length === 0) return core;
+	const separator = /[.!?。！？]$/.test(core) ? " " : ". ";
+	return `${core}${separator}${additions.join(". ")}`;
+}
+
+/** Merge monochrome anti-color terms into the negative prompt. */
+export function enforceStyleNegative(negative: string | undefined, style: StyleSelection): string | undefined {
+	const core = (negative ?? "").trim();
+	if (!isMonochromeStyle(style)) return core || undefined;
+	const existing = new Set(core.toLowerCase().split(",").map((item) => item.trim()).filter(Boolean));
+	const additions = MONOCHROME_NEGATIVE.filter((term) => !existing.has(term));
+	const merged = [core, ...additions].filter(Boolean).join(", ");
+	return merged || undefined;
 }
 
 export function projectConfig(cwd: string, project: MangaProject, global: MangaConfig): MangaConfig {

@@ -1,6 +1,6 @@
 # mz_automanga 设计方案
 
-> 版本：v0.3（已定稿，开始实施）
+> 版本：v0.4（已实现）
 > 目标运行环境：pi 1.5.1（`/root/.pi/agent/install/releases/1.5.1`）
 > 插件名：`mz_automanga`
 > 图像模型：Agnes Image 2.5 Flash（`agnes-image-2.5-flash`）
@@ -14,6 +14,16 @@
 | 1 | 漫画图片必须带气泡和文字 | 文字与气泡由图像模型直接画进 PNG；`prompt_artist` 负责把 `dialogue[]` 转成明确的 lettering 指令。见 §2.5、§5.5、§8.4 |
 | 2 | Web 仅显示图片，不做额外工作 | Web 缩为“项目选择 + 图片网格 + 单页阅读”，移除气泡叠加、角色页、提示词页、QA 页。见 §9 |
 | 3 | 本机内存较小，避免过大内存占用 | 新增低内存实现约束：流式下载/写入、不缓存图片、逐页会话、日志截断、出图串行。见 §12.5 |
+
+### v0.4（本轮，已实现）
+
+| # | 要求 | 本版处理 |
+|---|---|---|
+| 1 | 黑白漫画设定没有体现，仍生成彩色 | `manga-bw` 画风串与 negative 增加显式颜色锁；出图阶段由代码兜底补全旧提示词，并对生成的 PNG 做确定性灰度化。见 §8.4 |
+| 2 | Web 支持查看人设图 | `/api/project` 增加 `characters[]`；前端增加“漫画 / 人设”切换与人设图阅读。见 §9.2、§9.4 |
+| 3 | 子 agent 后台工作时显示 token | 嵌套会话的 `usage/context` 进度回传到 `PipelineUi`，状态栏与面板实时显示当前角色 token、项目累计 token 与上下文用量。见 §7.5 |
+| 4 | 剧本分析完成后标记通过 | 分析完成且无需澄清时立即 `recordGate("script", "approved")`；只有存在待确认问题才保持 pending。见 §6.3 |
+| 5 | Web 中文路径 404 | 页面快照媒体路径补上 `pages/` 前缀；前端对 slug 与文件路径逐段编码，服务端单次解码。见 §9.2 |
 
 ### 实现状态（v0.1，已完成）
 
@@ -1035,6 +1045,7 @@ export async function runRole(options: RoleRunOptions): Promise<RoleRunResult> {
 ### 7.5 进度、用量、上下文
 
 - 订阅事件 → 统一转成 `ProgressUpdate`：`{ kind: "text"|"tool"|"usage"|"status", detail, usage?, contextTokens?, contextPercent? }`。
+- `runner` 在每次事件上附带累计 `usage` 与 `getContextUsage()`；`MangaPipeline.onRoleProgress` 把它写入 `activeUsage` / `runContext*`，因此角色运行期间状态栏就能看到当前 token，而不是等 `finishRun` 后才汇总。
 - TUI 状态栏（一行）+ widget（三行）：
 
 ```
@@ -1133,6 +1144,12 @@ export async function runRole(options: RoleRunOptions): Promise<RoleRunResult> {
 
 ### 8.4 参考图与一致性
 
+`manga-bw` 的颜色约束分三层：
+
+1. 画风串包含 `black and white / monochrome / no color` 与 `COLOR LOCK`；
+2. `images.ts` 在每次请求前调用 `enforceStylePrompt` / `enforceStyleNegative`，即使旧提示词里没有颜色锁也会补齐，并把 color/sepia/彩色光等加入 negative；
+3. 下载完成后调用 `toMonochromePng`，把 8-bit RGB/RGBA PNG 确定性地转为灰度（保留 alpha 与尺寸；不处理 JPEG、调色板、16-bit、隔行或超大图）。这一步保证 Web 预览与 CBZ 中不会再出现彩色画面。
+
 - 角色立绘：1K、与画风同比例、三视图合一（正/四分之三/特写）。
 - 分镜格：默认 1K 草稿；`--final` 用 2K 重绘（同 prompt、同 refs，仅 size 变化）。
 - 多角色同框：`refs = [A 立绘, B 立绘, …]`，prompt 中逐个绑定身份；超过 `maxRefs` 按 `focus: primary` 优先保留。
@@ -1169,12 +1186,14 @@ export async function runRole(options: RoleRunOptions): Promise<RoleRunResult> {
 
 ### 9.2 路由（全部只读，只服务图片）
 
+`/api/project` 同时返回 `pages[]` 与 `characters[]`。媒体文件统一走 `/media/<slug>/<project-relative-path>`；快照中的路径必须包含 `pages/` 或 `characters/` 前缀。前端对 slug 和路径的每一段分别 `encodeURIComponent`，服务端只解码一次，避免中文项目名被二次编码后 404。
+
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/` | 单页应用：项目选择器 + 图片网格 + 单页阅读 |
 | GET | `/app.js`, `/style.css` | 包内静态资源 |
 | GET | `/api/projects` | 项目列表（slug、标题、页数、完成数） |
-| GET | `/api/project?p=<slug>` | 项目摘要 + 每页的图片清单（只含 `page/panel/file/status`） |
+| GET | `/api/project?p=<slug>` | 项目摘要 + 每页图片清单（`page/panel/file/status`）+ 角色人设清单（`characters[]`） |
 | GET | `/media/<slug>/<relpath>` | 图片（PNG/JPEG），支持 Range |
 | GET | `/api/events?p=<slug>` | SSE：`snapshot` / `panel` / `ping` |
 
@@ -1207,8 +1226,9 @@ export async function runRole(options: RoleRunOptions): Promise<RoleRunResult> {
 └──────────────────────────────────────────────────────┘
 ```
 
-- **网格**：按页分组，`CSS grid`，`loading="lazy"`；只显示 `<img>`；生成中显示占位，失败显示“重试中”状态点。
-- **阅读**：点击图片进入大图，`←/→` 切换上一张/下一张；`webtoon` 预设纵向滚动。
+- **视图切换**：顶部“漫画 / 人设”两个 Tab。漫画按页分组；人设按角色展示 `characters/<id>/ref.png`、姓名与角色定位。
+- **网格**：`CSS grid`，`loading="lazy"`；只显示 `<img>`；生成中显示占位，失败显示“重试中”状态点。
+- **阅读**：点击漫画或人设图进入大图，`←/→` 切换上一张/下一张；`webtoon` 预设纵向滚动。
 - **无叠加**：不渲染气泡、不渲染对白、不做缩放控件、不做编辑；文字已经在 PNG 里。
 - **实时**：`EventSource` 收到 `panel` 事件时只替换对应 `<img>` 的 `src`（加 `?v=<mtime>` 破缓存）。
 - **主题**：深色为主，跟随 `prefers-color-scheme`；窄屏单列。

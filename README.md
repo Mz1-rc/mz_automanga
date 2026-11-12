@@ -1,6 +1,6 @@
 # mz_automanga
 
-pi 插件：根据剧本自动创作漫画。流程由代码严格线性编排，创作由一组专职子 agent 完成；图像使用 [Agnes Image 2.5 Flash](https://www.agnes-ai.com/zh-Hans/docs/agnes-image-25-flash) 生成，**文字与气泡直接画进图片**。内置只读 Web 预览，只显示图片。
+pi 插件：根据剧本自动创作漫画。流程由代码严格线性编排，创作由一组专职子 agent 完成；图像使用 [Agnes Image 2.5 Flash](https://www.agnes-ai.com/zh-Hans/docs/agnes-image-25-flash) 生成，**文字与气泡直接画进图片**。内置只读 Web 预览：漫画画面、角色人设图与单页阅读，不提供写操作。
 
 ## 安装
 
@@ -124,16 +124,19 @@ init
 
 ## 后台状态
 
-运行期间底部状态栏显示：标题、阶段、角色、进度、token、耗时、Web 开关；编辑区上方的面板显示：
+运行期间底部状态栏显示：标题、阶段、角色、进度、累计 token、耗时、Web 开关；编辑区上方的面板显示：
 
 - 四道闸门状态；
 - 进度条与 `step/total`；
 - 当前动作（例如 `page-002/panel-03 · 读取 pages/page-002.json`）；
-- 输入/输出 token、费用、耗时；
+- 项目累计输入/输出 token、**当前子 agent 实时 token**、费用、耗时；
+- 子 agent 的上下文用量（可用时）；
 - Web 地址或“未启动”；
 - 待确认问题与最近错误。
 
-`/manga status` 会额外显示任务标签、是否已结束、最近工具调用与任务错误。
+子 agent 的 token 由嵌套会话的进度事件实时回传，角色运行期间即可看到，不需要等阶段结束。`/manga status` 会额外显示任务标签、是否已结束、最近工具调用、本角色 token、上下文与任务错误。
+
+剧本分析完成且不需要用户澄清时，`script` 闸门会立即标记为通过；只有存在 `blocker/major` 问题（或 `always` 策略下的任何问题）时才停在剧本确认闸门。
 
 ## 输出
 
@@ -165,6 +168,8 @@ exports/<slug>.cbz
 | `webtoon` | 9:16 | 竖屏条漫、纵向滚动 |
 | `custom` | 可选 | 自定义风格描述 |
 
+`manga-bw` 会在画风串、每个出图请求与 negative 中重复颜色锁（`black and white / monochrome / no color`）。即使旧项目的提示词里只有“seinen manga”，出图阶段也会自动补上颜色锁；生成后的 PNG 还会做一次确定性灰度化兜底，避免模型忽略提示词而输出彩色。
+
 所有画风都会追加：
 
 ```
@@ -188,7 +193,8 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
 - `/manga web start --port 45871`、`/manga web stop`、`/manga web status`、`/manga web restart --port 45871`。`web.port` 默认为 0（未配置），此时必须带 `--port`。
 - 默认 `127.0.0.1`；`--host 0.0.0.0` 允许局域网访问。
 - 非回环绑定默认强制 token，终端会打印带 token 的完整地址；`--no-token` 显式关闭并告警。
-- 只读：项目选择 + 图片网格 + 单页阅读；不提供任何写接口，不叠加气泡（文字已在 PNG 里）。
+- 只读：项目选择 + 漫画网格 + **角色人设图** + 单页阅读；不提供任何写接口，不叠加气泡（文字已在 PNG 里）。
+- 媒体地址为 `/media/<项目 slug>/<项目相对路径>`，中文 slug 与文件名会正确 URL 编码；页面快照中的路径自带 `pages/` 前缀。
 - 图片直接流式返回，支持 Range/ETag；服务端不缓存图片字节。
 
 ## 小内存设计
@@ -221,10 +227,10 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
 ## 测试
 
 ```bash
-node --experimental-strip-types --test tests/*.test.ts   # 32 个用例
+node --experimental-strip-types --test tests/*.test.ts   # 36 个用例
 ```
 
-测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering 校验、Agnes 重试与流式下载上限、Web 路由/鉴权/SSE/Range、CBZ、完整流水线与缓存跳过。
+测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering 校验、黑白画风颜色锁与灰度兜底、Agnes 重试与流式下载上限、Web 路由/鉴权/SSE/Range/中文路径/人设图、CBZ、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过。
 
 ## 已知限制
 

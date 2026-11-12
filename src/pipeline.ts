@@ -89,6 +89,8 @@ export class MangaPipeline {
 	private runTotal?: number;
 	private runDetail?: string;
 	private lastTool?: string;
+	private runContextTokens?: number;
+	private runContextPercent?: number;
 
 	constructor(options: PipelineOptions) {
 		this.store = options.store;
@@ -128,6 +130,8 @@ export class MangaPipeline {
 			this.runDetail = message;
 			this.runStep = undefined;
 			this.runTotal = undefined;
+			this.runContextTokens = undefined;
+			this.runContextPercent = undefined;
 			this.ui.updateStatus(this.store, this.status(), this.activeUsage);
 			throw error;
 		} finally {
@@ -143,6 +147,8 @@ export class MangaPipeline {
 		this.runStep = undefined;
 		this.runTotal = undefined;
 		this.lastTool = undefined;
+		this.runContextTokens = undefined;
+		this.runContextPercent = undefined;
 		this.activeUsage = emptyUsage();
 		this.ui.updateStatus(this.store, this.status(), this.activeUsage);
 	}
@@ -292,6 +298,11 @@ export class MangaPipeline {
 				this.ui.notify(`剧本有 ${blocking.length} 个问题需要确认。`, "warning");
 				this.store.transition("script_gate");
 			} else {
+				// Analysis is complete and needs no user input, so the script gate is
+				// passed immediately instead of staying pending in the Web/TUI panel.
+				if (this.store.gate("script").status !== "approved") {
+					this.store.recordGate("script", "approved", { feedback: "剧本分析完成，无需澄清" });
+				}
 				this.ui.notify(`剧本分析完成：${analysis.scenes.length} 个场景，预计 ${analysis.pageEstimate} 页。`, "info");
 				this.store.transition("design");
 			}
@@ -925,6 +936,8 @@ export class MangaPipeline {
 			total: this.runTotal,
 			detail: this.runDetail,
 			lastTool: this.lastTool,
+			contextTokens: this.runContextTokens,
+			contextPercent: this.runContextPercent,
 			...extra,
 		};
 	}
@@ -936,6 +949,9 @@ export class MangaPipeline {
 		this.runTotal = undefined;
 		this.runDetail = undefined;
 		this.lastTool = undefined;
+		this.runContextTokens = undefined;
+		this.runContextPercent = undefined;
+		this.activeUsage = emptyUsage();
 		this.ui.updateStatus(this.store, this.status(), this.activeUsage);
 	}
 
@@ -950,12 +966,17 @@ export class MangaPipeline {
 	}
 
 	private onRoleProgress(update: ProgressUpdate): void {
+		// The runner attaches cumulative usage and context usage to every
+		// progress event, so the footer can show live numbers while a role runs.
+		if (update.usage) this.activeUsage = { ...update.usage };
+		if (update.contextTokens !== undefined) this.runContextTokens = update.contextTokens;
+		if (update.contextPercent !== undefined) this.runContextPercent = update.contextPercent;
 		if (update.kind === "text") {
 			this.report(update.detail ?? "生成中");
 		} else if (update.kind === "tool") {
 			this.lastTool = update.toolName;
 			this.report(update.detail ?? update.toolName ?? "工具调用", { lastTool: update.toolName });
-		} else if (update.kind === "usage") {
+		} else if (update.kind === "usage" || update.kind === "status") {
 			this.ui.updateStatus(this.store, this.status(), this.activeUsage);
 		}
 	}

@@ -148,9 +148,14 @@ export function updateStatus(
 	const detail = shortText(status?.detail);
 	if (detail) lines.push(`当前：${detail}`);
 	const cost = formatCost(total.cost);
+	const active = activeUsage && (activeUsage.input || activeUsage.output) ? activeUsage : undefined;
 	lines.push(
-		`Token：入 ${formatTokens(total.input)} / 出 ${formatTokens(total.output)}${cost ? ` · ${cost}` : ""}${elapsed ? ` · 耗时 ${elapsed}` : ""}`,
+		`Token：入 ${formatTokens(total.input)} / 出 ${formatTokens(total.output)}${active ? ` · 本角色 入 ${formatTokens(active.input)} / 出 ${formatTokens(active.output)}` : ""}${cost ? ` · ${cost}` : ""}${elapsed ? ` · 耗时 ${elapsed}` : ""}`,
 	);
+	if (status?.contextTokens !== undefined) {
+		const percent = status.contextPercent !== undefined ? ` · ${Math.round(status.contextPercent)}%` : "";
+		lines.push(`上下文：${formatTokens(status.contextTokens)}${percent}`);
+	}
 	if (status?.webUrl) lines.push(`Web：${status.webUrl}`);
 	else lines.push("Web：未启动（/manga web start --port <端口>）");
 	if (state.pendingQuestions?.length && !["done", "paused"].includes(state.phase)) {

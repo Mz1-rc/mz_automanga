@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import type { MangaConfig } from "../config.ts";
 import { ensureDir, readJson, resolveWithin, writeAtomic } from "../paths.ts";
 import { listProjects, ProjectStore } from "../state.ts";
-import type { MangaPage } from "../types.ts";
+import type { Bible, MangaPage } from "../types.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(HERE, "public");
@@ -149,7 +149,7 @@ function serveFile(req: IncomingMessage, res: ServerResponse, path: string): voi
 	stream.pipe(res);
 }
 
-function pageSummary(projectRoot: string, slug: string): { pages: Array<{ id: string; index: number; panels: Array<{ id: string; file: string; status: string; version: number }> }> } {
+function pageSummary(projectRoot: string): { pages: Array<{ id: string; index: number; panels: Array<{ id: string; file: string; status: string; version: number }> }> } {
 	const pages: Array<{ id: string; index: number; panels: Array<{ id: string; file: string; status: string; version: number }> }> = [];
 	const pagesDir = join(projectRoot, "pages");
 	if (!existsSync(pagesDir)) return { pages };
@@ -162,15 +162,17 @@ function pageSummary(projectRoot: string, slug: string): { pages: Array<{ id: st
 			id,
 			index: page.index,
 			panels: page.panels.map((panel, index) => {
-				const file = `${id}/panel-${String(index + 1).padStart(2, "0")}.png`;
-				const abs = join(pagesDir, file);
+				// Media URLs are /media/<slug>/<project-relative path>; include the
+				// pages/ prefix so the server can resolve the file from the project root.
+				const file = `pages/${id}/panel-${String(index + 1).padStart(2, "0")}.png`;
+				const abs = join(projectRoot, file);
 				let version = 0;
 				try {
 					version = Math.floor(statSync(abs).mtimeMs);
 				} catch {
 					version = 0;
 				}
-				return { id: panel.id, file: `${slug}/${file}`, status: panel.image?.status ?? (version ? "done" : "pending"), version };
+				return { id: panel.id, file, status: panel.image?.status ?? (version ? "done" : "pending"), version };
 			}),
 		});
 	}
@@ -186,8 +188,43 @@ function readdirSafe(path: string): string[] {
 	}
 }
 
+function characterSummary(store: ProjectStore): Array<{
+	id: string;
+	name: string;
+	role: string;
+	file: string;
+	version: number;
+}> {
+	const bible = readJson<Bible>(join(store.root, "bible.json"));
+	if (!bible || !Array.isArray(bible.cast)) return [];
+	return bible.cast.map((member) => {
+		const fallback = `characters/${member.id}/ref.png`;
+		let rel = (member.refSheet || fallback).replaceAll("\\", "/");
+		let abs: string;
+		try {
+			abs = resolveWithin(store.root, rel);
+		} catch {
+			rel = fallback;
+			abs = join(store.root, rel);
+		}
+		let version = 0;
+		try {
+			version = Math.floor(statSync(abs).mtimeMs);
+		} catch {
+			version = 0;
+		}
+		return {
+			id: member.id,
+			name: member.name || member.id,
+			role: member.role || "",
+			file: rel,
+			version,
+		};
+	});
+}
+
 function projectSnapshot(store: ProjectStore): unknown {
-	const summary = pageSummary(store.root, store.project.slug);
+	const summary = pageSummary(store.root);
 	return {
 		slug: store.project.slug,
 		title: store.project.title,
@@ -196,6 +233,7 @@ function projectSnapshot(store: ProjectStore): unknown {
 		stats: store.state.stats,
 		style: { preset: store.project.style.preset, ratio: store.project.style.ratio },
 		...summary,
+		characters: characterSummary(store),
 	};
 }
 

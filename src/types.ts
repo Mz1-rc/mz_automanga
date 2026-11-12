@@ -431,6 +431,11 @@ export interface RunStatus {
 	total?: number;
 	/** Last tool call observed in a nested session. */
 	lastTool?: string;
+	/** Live token usage of the currently running role (not the project total). */
+	usage?: RunUsage;
+	/** Nested-session context usage, when available. */
+	contextTokens?: number;
+	contextPercent?: number;
 	/** Read-only preview URL, when the web server is running. */
 	webUrl?: string;
 	/** True when the job has finished (successfully or not). */

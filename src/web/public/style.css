@@ -47,6 +47,32 @@ body {
 	border-radius: 6px;
 }
 
+.tabs {
+	display: flex;
+	gap: 4px;
+}
+
+.tab {
+	padding: 6px 12px;
+	color: var(--muted);
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	cursor: pointer;
+	font: inherit;
+}
+
+.tab:hover {
+	color: var(--text);
+	border-color: var(--line);
+}
+
+.tab.active {
+	color: var(--text);
+	background: var(--panel);
+	border-color: var(--line);
+}
+
 .spacer {
 	flex: 1;
 }
@@ -57,6 +83,10 @@ body {
 	white-space: nowrap;
 }
 
+.view[hidden] {
+	display: none;
+}
+
 .grid {
 	display: flex;
 	flex-direction: column;
@@ -64,6 +94,55 @@ body {
 	padding: 20px 16px 60px;
 	max-width: 1400px;
 	margin: 0 auto;
+}
+
+.cast-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+	gap: 16px;
+	padding: 20px 16px 60px;
+	max-width: 1400px;
+	margin: 0 auto;
+}
+
+.cast-card {
+	margin: 0;
+	background: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	overflow: hidden;
+	cursor: zoom-in;
+}
+
+.cast-card img {
+	display: block;
+	width: 100%;
+	height: auto;
+	background: #000;
+}
+
+.cast-card figcaption {
+	padding: 8px 10px;
+	color: var(--text);
+	font-size: 13px;
+	border-top: 1px solid var(--line);
+}
+
+.cast-card.pending {
+	cursor: default;
+	min-height: 180px;
+	display: grid;
+	place-items: center;
+}
+
+.cast-card.pending::before {
+	content: "立绘生成中…";
+	color: var(--muted);
+	font-size: 12px;
+}
+
+.cast-card.pending figcaption {
+	display: none;
 }
 
 .page-title {

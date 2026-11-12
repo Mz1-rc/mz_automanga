@@ -2,10 +2,16 @@ import { existsSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import type { AgnesClient, AgnesGenerateResult, AgnesReference } from "./agnes.ts";
 import { AgnesError } from "./agnes.ts";
-import type { MangaConfig } from "./config.ts";
+import {
+	enforceStyleNegative,
+	enforceStylePrompt,
+	isMonochromeStyle,
+	type MangaConfig,
+} from "./config.ts";
 import { panelRelPath, readText, resolveWithin, sha256, writeAtomic } from "./paths.ts";
 import type { ProjectStore } from "./state.ts";
 import type { CastMember, MangaPage, Panel } from "./types.ts";
+import { toMonochromePng } from "./util/png-grayscale.ts";
 
 export interface ImageProgress {
 	kind: "panel-start" | "panel-done" | "panel-skip" | "panel-fail" | "char-start" | "char-done" | "char-skip" | "char-fail";
@@ -129,13 +135,15 @@ export async function generateCharacterImages(options: ImageStageOptions): Promi
 		try {
 			bumpVersion(abs, config.image.keepVersions);
 			const result = await client.generate({
-				prompt,
+				prompt: enforceStylePrompt(prompt, style),
+				negative: enforceStyleNegative(undefined, style),
 				size: config.image.draftSize,
 				ratio: style.ratio,
 				outPath: abs,
 				signal,
 				projectRoot: store.root,
 			});
+			if (isMonochromeStyle(style)) toMonochromePng(abs);
 			writeSourceUrl(store.root, rel, result.sourceUrl);
 			done++;
 			options.onProgress?.({ kind: "char-done", label, index: index + 1, total });
@@ -193,8 +201,10 @@ export async function generatePanelImages(options: ImageStageOptions): Promise<{
 		const label = key;
 		options.onProgress?.({ kind: "panel-start", label, index: index + 1, total });
 
-		const prompt = (panel.promptOverride?.trim() || panel.prompt?.trim() || "").trim();
-		if (!prompt) {
+		const rawPrompt = (panel.promptOverride?.trim() || panel.prompt?.trim() || "").trim();
+		const prompt = enforceStylePrompt(rawPrompt, store.project.style);
+		const negative = enforceStyleNegative(panel.negative, store.project.style);
+		if (!rawPrompt) {
 			panel.image = { ...(panel.image ?? { status: "pending" }), status: "failed", error: "缺少 prompt" };
 			failed++;
 			failures.push(key);
@@ -218,7 +228,7 @@ export async function generatePanelImages(options: ImageStageOptions): Promise<{
 			}
 		}
 		const refs = buildReferences(store.root, refRels, config.image.maxRefs);
-		const cacheKey = panelCacheKey({ prompt, negative: panel.negative, size, ratio: store.project.style.ratio, model: config.image.model, refs });
+		const cacheKey = panelCacheKey({ prompt, negative, size, ratio: store.project.style.ratio, model: config.image.model, refs });
 		const existing = panel.image;
 		if (!options.force && existing?.status === "done" && existing.cacheKey === cacheKey && existsSync(abs)) {
 			skipped++;
@@ -230,7 +240,7 @@ export async function generatePanelImages(options: ImageStageOptions): Promise<{
 			bumpVersion(abs, config.image.keepVersions);
 			const result: AgnesGenerateResult = await client.generate({
 				prompt,
-				negative: panel.negative,
+				negative,
 				size,
 				ratio: store.project.style.ratio,
 				refs,
@@ -238,6 +248,7 @@ export async function generatePanelImages(options: ImageStageOptions): Promise<{
 				signal,
 				projectRoot: store.root,
 			});
+			if (isMonochromeStyle(store.project.style)) toMonochromePng(abs);
 			writeSourceUrl(store.root, rel, result.sourceUrl);
 			panel.image = {
 				status: "done",
@@ -296,8 +307,10 @@ export async function regeneratePanel(options: ImageStageOptions & { key: string
 	if (!panel) throw new Error(`找不到格: ${options.key}`);
 	if (options.promptOverride) panel.prompt = options.promptOverride;
 	if (options.note?.trim()) panel.prompt = `${panel.prompt ?? ""}\n\nAdditional direction: ${options.note.trim()}`;
-	const prompt = (panel.prompt ?? "").trim();
-	if (!prompt) throw new Error(`格子 ${options.key} 缺少 prompt`);
+	const rawPrompt = (panel.prompt ?? "").trim();
+	if (!rawPrompt) throw new Error(`格子 ${options.key} 缺少 prompt`);
+	const prompt = enforceStylePrompt(rawPrompt, store.project.style);
+	const negative = enforceStyleNegative(panel.negative, store.project.style);
 	const bible = store.readBible();
 	if (!bible) throw new Error("bible.json 缺失");
 	const refRels: string[] = [];
@@ -313,7 +326,7 @@ export async function regeneratePanel(options: ImageStageOptions & { key: string
 	const size = options.final ? config.image.finalSize : config.image.draftSize;
 	const result = await client.generate({
 		prompt,
-		negative: panel.negative,
+		negative,
 		size,
 		ratio: store.project.style.ratio,
 		refs,
@@ -321,12 +334,13 @@ export async function regeneratePanel(options: ImageStageOptions & { key: string
 		signal,
 		projectRoot: store.root,
 	});
+	if (isMonochromeStyle(store.project.style)) toMonochromePng(abs);
 	writeSourceUrl(store.root, rel, result.sourceUrl);
 	panel.image = {
 		status: "done",
 		file: rel,
 		sourceUrl: result.sourceUrl ?? null,
-		cacheKey: panelCacheKey({ prompt, negative: panel.negative, size, ratio: store.project.style.ratio, model: config.image.model, refs }),
+		cacheKey: panelCacheKey({ prompt, negative, size, ratio: store.project.style.ratio, model: config.image.model, refs }),
 		size,
 		ratio: store.project.style.ratio,
 		width: result.width,

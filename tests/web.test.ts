@@ -1,8 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { freePort, makeTestProject, writeTinyPng } from "./helpers.ts";
 import { startWebServer } from "../src/web/server.ts";
+
+function mediaPath(slug: string, file: string): string {
+	const encodedFile = file.split("/").map((part) => encodeURIComponent(part)).join("/");
+	return `/media/${encodeURIComponent(slug)}/${encodedFile}`;
+}
 
 function seed(store: ReturnType<typeof makeTestProject>["store"]) {
 	store.writePage({
@@ -22,6 +28,30 @@ function seed(store: ReturnType<typeof makeTestProject>["store"]) {
 		],
 	});
 	writeTinyPng(join(store.root, "pages", "page-001", "panel-01.png"));
+	writeFileSync(
+		join(store.root, "bible.json"),
+		JSON.stringify({
+			schemaVersion: 1,
+			title: store.project.title,
+			logline: "l",
+			genre: [],
+			tone: "",
+			audience: "",
+			art: { preset: "manga-bw", stylePrompt: "", letteringStyle: "", palette: [] },
+			world: { locations: [] },
+			cast: [
+				{
+					id: "lin",
+					name: "林澈",
+					role: "protagonist",
+					canonical: "seventeen-year-old Chinese girl with black hair",
+					outfits: { default: "navy blazer" },
+					refSheet: "characters/lin/ref.png",
+				},
+			],
+		}),
+	);
+	writeTinyPng(join(store.root, "characters", "lin", "ref.png"));
 	store.refreshStats();
 }
 
@@ -42,24 +72,34 @@ test("web server serves projects, page summaries and images read-only", async ()
 
 		const snapshot = await (await fetch(`${handle.url}/api/project?p=${store.project.slug}`)).json() as {
 			pages: Array<{ id: string; panels: Array<{ file: string; status: string; version: number }> }>;
+			characters: Array<{ id: string; name: string; file: string; version: number }>;
 		};
 		assert.equal(snapshot.pages.length, 1);
 		assert.equal(snapshot.pages[0].panels[0].status, "done");
+		assert.equal(snapshot.pages[0].panels[0].file, "pages/page-001/panel-01.png");
 		assert.ok(snapshot.pages[0].panels[0].version > 0);
+		assert.equal(snapshot.characters.length, 1);
+		assert.equal(snapshot.characters[0].id, "lin");
+		assert.ok(snapshot.characters[0].version > 0);
 
-		const media = await fetch(`${handle.url}/media/${store.project.slug}/pages/page-001/panel-01.png`);
+		// Chinese project slugs must be URL-encoded exactly once in both places.
+		const media = await fetch(`${handle.url}${mediaPath(store.project.slug, snapshot.pages[0].panels[0].file)}`);
 		assert.equal(media.status, 200);
 		assert.equal(media.headers.get("content-type"), "image/png");
 		assert.equal(media.headers.get("accept-ranges"), "bytes");
 
-		const range = await fetch(`${handle.url}/media/${store.project.slug}/pages/page-001/panel-01.png`, {
+		const characterMedia = await fetch(`${handle.url}${mediaPath(store.project.slug, snapshot.characters[0].file)}`);
+		assert.equal(characterMedia.status, 200);
+		assert.equal(characterMedia.headers.get("content-type"), "image/png");
+
+		const range = await fetch(`${handle.url}${mediaPath(store.project.slug, snapshot.pages[0].panels[0].file)}`, {
 			headers: { Range: "bytes=0-3" },
 		});
 		assert.equal(range.status, 206);
 		assert.equal((await range.arrayBuffer()).byteLength, 4);
 
 		const traversal = await fetch(
-			`${handle.url}/media/${store.project.slug}/%2e%2e%2fproject.json`,
+			`${handle.url}/media/${encodeURIComponent(store.project.slug)}/%2e%2e%2fproject.json`,
 		);
 		assert.notEqual(traversal.status, 200);
 

@@ -8,6 +8,15 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 
+/** Build a media URL that survives Chinese project slugs and file names. */
+function mediaUrl(file, version) {
+	const encoded = String(file)
+		.split("/")
+		.map((part) => encodeURIComponent(part))
+		.join("/");
+	return `/media/${encodeURIComponent(state.slug)}/${encoded}?v=${version}`;
+}
+
 function params() {
 	return new URLSearchParams(location.search);
 }
@@ -42,13 +51,16 @@ const PHASE_LABELS = {
 function statusText(snapshot) {
 	if (!snapshot) return "";
 	const stats = snapshot.stats || {};
+	const characters = snapshot.characters || [];
 	const phase = PHASE_LABELS[snapshot.phase] || snapshot.phase;
-	return `${phase} · 页 ${stats.pages ?? 0} · 图 ${stats.images ?? 0}/${stats.panels ?? 0}`;
+	const cast = characters.length ? ` · 角色 ${characters.filter((item) => item.version > 0).length}/${characters.length}` : "";
+	return `${phase} · 页 ${stats.pages ?? 0} · 图 ${stats.images ?? 0}/${stats.panels ?? 0}${cast}`;
 }
 
 function render(snapshot) {
 	state.snapshot = snapshot;
 	$("status").textContent = statusText(snapshot);
+	setProjectMeta(snapshot);
 	const grid = $("grid");
 	grid.replaceChildren();
 	if (snapshot.style && snapshot.style.ratio) {
@@ -74,7 +86,7 @@ function render(snapshot) {
 				const img = document.createElement("img");
 				img.loading = "lazy";
 				img.alt = `${page.id}/${panel.id}`;
-				img.src = `/media/${panel.file}?v=${panel.version}`;
+				img.src = mediaUrl(panel.file, panel.version);
 				card.append(img);
 				const index = state.images.length;
 				state.images.push({ src: img.src, alt: img.alt });
@@ -85,6 +97,49 @@ function render(snapshot) {
 		section.append(panels);
 		grid.append(section);
 	}
+
+	renderCharacters(snapshot.characters || []);
+}
+
+function renderCharacters(characters) {
+	const grid = $("cast-grid");
+	grid.replaceChildren();
+	if (!characters.length) {
+		grid.innerHTML = '<div class="error">尚无角色设定。运行 /manga cast --regen 生成人设图。</div>';
+		return;
+	}
+	const roleLabels = { protagonist: "主角", antagonist: "反派", supporting: "配角" };
+	for (const character of characters) {
+		const card = document.createElement("figure");
+		card.className = `cast-card ${character.version > 0 ? "" : "pending"}`;
+		card.title = `${character.id} · ${character.name}`;
+		if (character.version > 0) {
+			const img = document.createElement("img");
+			img.loading = "lazy";
+			img.alt = `${character.name}（${character.id}）人设图`;
+			img.src = mediaUrl(character.file, character.version);
+			card.append(img);
+			const index = state.images.length;
+			state.images.push({ src: img.src, alt: img.alt });
+			card.addEventListener("click", () => openReader(index));
+		}
+		const caption = document.createElement("figcaption");
+		caption.textContent = `${character.name} · ${roleLabels[character.role] || character.role || "角色"}`;
+		card.append(caption);
+		grid.append(card);
+	}
+}
+
+function showView(view) {
+	const pages = view !== "cast";
+	$("pages-view").hidden = !pages;
+	$("cast-view").hidden = pages;
+	$("tab-pages").classList.toggle("active", pages);
+	$("tab-cast").classList.toggle("active", !pages);
+}
+
+function setProjectMeta(snapshot) {
+	$("tab-cast").textContent = snapshot && (snapshot.characters || []).length ? `人设 ${snapshot.characters.length}` : "人设";
 }
 
 async function loadProject(slug) {
@@ -164,6 +219,8 @@ function showError(error) {
 	$("status").textContent = "";
 }
 
+$("tab-pages").addEventListener("click", () => showView("pages"));
+$("tab-cast").addEventListener("click", () => showView("cast"));
 $("prev").addEventListener("click", () => step(-1));
 $("next").addEventListener("click", () => step(1));
 $("close").addEventListener("click", closeReader);

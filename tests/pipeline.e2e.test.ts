@@ -14,12 +14,19 @@ import { readJson, resolveWithin, writeAtomic } from "../src/paths.ts";
 async function startMockAgnes() {
 	let base = "";
 	let requests = 0;
+	const prompts: string[] = [];
 	const png = tinyPng(10, 10);
 	const server = createServer((req, res) => {
 		if (req.method === "POST") {
 			requests++;
-			req.resume();
+			let body = "";
+			req.on("data", (chunk) => (body += chunk));
 			req.on("end", () => {
+				try {
+					prompts.push(String(JSON.parse(body).prompt ?? ""));
+				} catch {
+					prompts.push("");
+				}
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify({ data: [{ url: `${base}/img.png` }] }));
 			});
@@ -41,6 +48,9 @@ async function startMockAgnes() {
 		url: base,
 		get requests() {
 			return requests;
+		},
+		get prompts() {
+			return prompts;
 		},
 		close: () => new Promise<void>((resolvePromise) => server.close(() => resolvePromise())),
 	};
@@ -216,6 +226,11 @@ test("pipeline runs end-to-end with a fake runner and mock Agnes, then skips cac
 		}
 		assert.ok(existsSync(join(reloaded.root, "exports", `${reloaded.project.slug}.cbz`)));
 		assert.equal(mock.requests, 4);
+		assert.ok(mock.prompts.length === 4);
+		for (const prompt of mock.prompts) {
+			assert.match(prompt, /COLOR LOCK|BLACK AND WHITE/i, "every Agnes request must carry the mono style lock");
+		}
+		assert.equal(reloaded.gate("script").status, "approved", "completed script analysis should mark the gate approved");
 
 		const second = await generatePanelImages({
 			store: reloaded,
@@ -228,6 +243,28 @@ test("pipeline runs end-to-end with a fake runner and mock Agnes, then skips cac
 	} finally {
 		await mock.close();
 	}
+});
+
+test("sub-agent progress streams live token and context usage", async () => {
+	const { cwd, store, config } = makeTestProject();
+	const ui = fakeUi();
+	const baseRunner = fakeRunner();
+	const runner: RoleRunner = async (options) => {
+		options.onProgress?.({
+			kind: "usage",
+			detail: "用量更新",
+			usage: { input: 1234, output: 567, total: 1801, cost: 0.012 },
+			contextTokens: 4321,
+			contextPercent: 23,
+		});
+		return baseRunner(options);
+	};
+	const pipeline = new MangaPipeline({ store, config, ui, agentDir: cwd, runner });
+	await pipeline.next();
+	assert.equal(store.state.phase, "design");
+	assert.equal(store.gate("script").status, "approved");
+	assert.ok(ui.state.usages.some((usage) => usage.input === 1234 && usage.output === 567));
+	assert.ok(ui.state.status.some((status) => status.contextTokens === 4321 && status.contextPercent === 23));
 });
 
 test("script gate records assumptions when the user chooses to continue", async () => {
