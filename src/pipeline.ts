@@ -14,6 +14,7 @@ import { recordAssumptions, runReviewGate, runScriptGate as runScriptGateUi, que
 import type { GateUi } from "./gates.ts";
 import type { ProjectStore } from "./state.ts";
 import type {
+	AdaptationLevel,
 	Bible,
 	GateId,
 	MangaPage,
@@ -28,7 +29,7 @@ import type {
 	RunUsage,
 	ScriptAnalysis,
 } from "./types.ts";
-import { ROLE_IDS } from "./types.ts";
+import { ADAPTATION_INFO, ADAPTATION_LEVELS, ROLE_IDS } from "./types.ts";
 
 export type RoleRunner = (options: RoleRunOptions) => Promise<RoleRunResult>;
 
@@ -280,6 +281,7 @@ export class MangaPipeline {
 	// ---------------------------------------------------------------------
 
 	async runScriptAnalysis(feedback?: string): Promise<void> {
+		await this.ensureAdaptationLevel();
 		this.beginStage("剧本分析", "剧本分析师");
 		await this.locked("script_analyst", async () => {
 			const result = await this.runRoleWithRetry("script_analyst", {
@@ -435,6 +437,7 @@ export class MangaPipeline {
 	// ---------------------------------------------------------------------
 
 	async runStoryboard(feedback?: string, force = false): Promise<void> {
+		await this.ensureAdaptationLevel();
 		this.beginStage("分镜", "分镜师");
 		await this.locked("storyboard", async () => {
 			const analysis = this.store.readAnalysis();
@@ -616,19 +619,30 @@ export class MangaPipeline {
 				else if (/未包含 dialogue/.test(issue)) missingText.push(issue);
 				else errors.push(issue);
 			}
+			if (!page.panels.some((panel) => (panel.dialogue?.length ?? 0) > 0)) {
+				warnings.push(`${page.id} 整页无文字，建议补旁白/心理活动`);
+			}
+			let previousEmpty = false;
 			for (const panel of page.panels) {
 				checked += 1;
+				const key = panelKey(page.id, panel.id);
+				const empty = (panel.characters?.length ?? 0) === 0 && (panel.dialogue?.length ?? 0) === 0;
+				if (empty) {
+					warnings.push(`${key} 是纯空镜（无角色/无文字），建议补旁白或心理活动`);
+					if (previousEmpty) warnings.push(`${key} 与上一格连续空镜，建议插入反应/说明文字`);
+				}
+				previousEmpty = empty;
 				const rel = panel.image?.file;
 				if (!rel || !fileExists(resolveWithin(this.store.root, rel))) {
-					errors.push(`${panelKey(page.id, panel.id)} 缺少图片`);
+					errors.push(`${key} 缺少图片`);
 				}
 				for (const ref of panel.refs ?? []) {
 					if (!fileExists(resolveWithin(this.store.root, ref))) {
-						errors.push(`${panelKey(page.id, panel.id)} 的参考图不存在: ${ref}`);
+						errors.push(`${key} 的参考图不存在: ${ref}`);
 					}
 				}
 				if (panel.image?.status === "failed") {
-					errors.push(`${panelKey(page.id, panel.id)} 出图失败：${panel.image.error ?? "未知"}`);
+					errors.push(`${key} 出图失败：${panel.image.error ?? "未知"}`);
 				}
 			}
 		}
@@ -947,6 +961,26 @@ export class MangaPipeline {
 		}
 	}
 
+	/** Ask once, before script analysis/storyboard, which fidelity level to use. */
+	private async ensureAdaptationLevel(): Promise<void> {
+		const current = this.project.adaptation;
+		if (current && (ADAPTATION_LEVELS as readonly string[]).includes(current)) return;
+		let level: AdaptationLevel = "balanced";
+		if (this.ui.hasUI) {
+			const choice = await this.ui.select(
+				"剧本整理与分镜改编程度（越自由，越能补充旁白/心理活动并减少空镜）",
+				ADAPTATION_LEVELS.map((item) => ADAPTATION_INFO[item].label),
+			);
+			if (!choice) throw new Error("已取消改编等级选择；请重新运行 /manga next。");
+			level = ADAPTATION_LEVELS.find((item) => ADAPTATION_INFO[item].label === choice) ?? "balanced";
+		} else {
+			this.ui.notify("未选择改编等级，默认使用「适当调整改写」（balanced）。", "warning");
+		}
+		this.project.adaptation = level;
+		this.store.saveProject();
+		this.ui.notify(`改编等级：${ADAPTATION_INFO[level].label}。`, "info");
+	}
+
 	private takeFeedback(): string | undefined {
 		const feedback = this.store.state.pendingFeedback ?? undefined;
 		if (feedback) {
@@ -1133,6 +1167,9 @@ function renderQaMarkdown(report: QaReport): string {
 		"",
 		"## 结构问题",
 		...(report.structural.errors.length ? report.structural.errors.map((item) => `- ${item}`) : ["- 无"]),
+		"",
+		"## 结构警告",
+		...(report.structural.warnings.length ? report.structural.warnings.map((item) => `- ${item}`) : ["- 无"]),
 		"",
 		"## 文字 / 气泡",
 		`- 缺少对白原文：${report.lettering.missingText.length}`,

@@ -9,7 +9,7 @@ import type { ImageArchiveFormat } from "./export.ts";
 import { ensureProjectWebPreviews } from "./previews.ts";
 import { listProjects, ProjectStore } from "./state.ts";
 import { readScriptInput } from "./script-input.ts";
-import type { RoleId, StylePreset, StyleSelection } from "./types.ts";
+import { ADAPTATION_INFO, ADAPTATION_LEVELS, type AdaptationLevel, type RoleId, type StylePreset, type StyleSelection } from "./types.ts";
 import { updateStatus, notify, phaseLabel, formatDuration, formatTokens } from "./ui.ts";
 import { startWebServer, type WebServerHandle } from "./web/server.ts";
 
@@ -138,6 +138,18 @@ function presetFromLabel(label: string): StylePreset {
 	return STYLE_LABELS.find((item) => item.label === label)?.preset ?? "manga-bw";
 }
 
+function adaptationFromValue(value?: string): AdaptationLevel | undefined {
+	const text = value?.trim();
+	if (!text) return undefined;
+	const lower = text.toLowerCase();
+	if ((ADAPTATION_LEVELS as readonly string[]).includes(lower)) return lower as AdaptationLevel;
+	return ADAPTATION_LEVELS.find((level) => ADAPTATION_INFO[level].label === text);
+}
+
+function adaptationLabel(level: AdaptationLevel | undefined): string {
+	return level ? ADAPTATION_INFO[level].label : "未选择（首次剧本分析前询问）";
+}
+
 export interface InitInput {
 	title?: string;
 	/** A single script file or a directory of text files. */
@@ -145,6 +157,7 @@ export interface InitInput {
 	style?: string;
 	customPrompt?: string;
 	ratio?: StyleSelection["ratio"];
+	adaptation?: string;
 }
 
 export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput): Promise<ProjectStore> {
@@ -200,7 +213,18 @@ export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput)
 		style = makeStyle(config.style);
 	}
 
-	const { store } = app.create(ctx.cwd, { title, style, script });
+	let adaptation = adaptationFromValue(input.adaptation);
+	if (!adaptation && input.adaptation) throw new Error(`未知改编等级：${input.adaptation}`);
+	if (!adaptation && ctx.hasUI) {
+		const choice = await ctx.ui.select(
+			"剧本整理与分镜改编程度",
+			ADAPTATION_LEVELS.map((level) => ADAPTATION_INFO[level].label),
+		);
+		if (!choice) throw new Error("已取消创建");
+		adaptation = adaptationFromValue(choice);
+	}
+
+	const { store } = app.create(ctx.cwd, { title, style, adaptation, script });
 	writeJsonAtomic(join(store.root, "source", "inputs.json"), {
 		inputPath: absPath,
 		fromDirectory: scriptInput.fromDirectory,
@@ -208,7 +232,7 @@ export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput)
 	});
 	notify(
 		ctx as never,
-		`已创建《${store.project.title}》（${store.project.style.label}，${store.project.style.ratio}，${scriptInput.files.length} 个输入文件）。运行 /manga next 开始剧本分析。`,
+		`已创建《${store.project.title}》（${store.project.style.label}，${store.project.style.ratio}，改编：${adaptationLabel(store.project.adaptation)}，${scriptInput.files.length} 个输入文件）。运行 /manga next 开始剧本分析。`,
 		"info",
 	);
 	refreshStatus(ctx, app, store);
@@ -223,6 +247,7 @@ export function actionStatus(ctx: ActionCtx, app: AppLike): string {
 		const lines = [
 			pipelineSummary(store),
 			`画风：${store.project.style.label} · ${store.project.style.ratio} · ${store.project.style.preset}`,
+			`改编：${adaptationLabel(store.project.adaptation)}`,
 			`目录：${store.root}`,
 			webHandle ? `Web：${webHandle.url}（${webHandle.host}:${webHandle.port}）` : "Web：未启动（/manga web start --port <端口>）",
 		];
@@ -551,6 +576,7 @@ export function actionConfig(ctx: ActionCtx, app: AppLike): string {
 		`项目：${store.project.slug}`,
 		`阶段：${phaseLabel(store.state.phase)}`,
 		`画风锁定串：${stylePrompt}`,
+		`改编等级：${adaptationLabel(store.project.adaptation)}`,
 		"",
 		JSON.stringify(safe, null, 2),
 	].join("\n");

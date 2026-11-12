@@ -17,6 +17,7 @@ import {
 	writeAtomic,
 } from "./paths.ts";
 import type {
+	AdaptationLevel,
 	GateId,
 	GateRecord,
 	MangaPage,
@@ -450,6 +451,7 @@ export function listProjects(cwd: string, config: MangaConfig): ProjectSummary[]
 export interface CreateProjectInput {
 	title?: string;
 	style: StyleSelection;
+	adaptation?: AdaptationLevel;
 	script: string;
 	config: MangaConfig;
 }
@@ -479,6 +481,7 @@ export function createProject(cwd: string, input: CreateProjectInput): ProjectSt
 		updatedAt: now,
 		language: "zh",
 		style: input.style,
+		...(input.adaptation ? { adaptation: input.adaptation } : {}),
 		image: { ...input.config.image },
 		gates: { ...input.config.gates },
 		agents: { ...input.config.agents, overrides: { ...input.config.agents.overrides } },

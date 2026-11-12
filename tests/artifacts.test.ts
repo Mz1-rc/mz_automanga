@@ -175,3 +175,20 @@ test("validateRefPrompts accepts inline or file prompts", () => {
 	writeFileSync(join(store.root, "characters", "lin", "ref.prompt.txt"), "sheet prompt");
 	assert.equal(validateRefPrompts(without, store.root).ok, true);
 });
+
+test("validatePage limits pure empty panels and consecutive empties", () => {
+	const { store } = makeTestProject();
+	const empty = page(false);
+	for (const panel of empty.panels) {
+		panel.characters = [];
+		panel.dialogue = [];
+	}
+	const result = validatePage(empty, {
+		bible: bible(),
+		stylePrompt: "",
+		stage: "storyboard",
+		projectRoot: store.root,
+	});
+	assert.equal(result.ok, false);
+	assert.ok(result.issues.some((issue) => issue.includes("纯空镜")));
+});

@@ -62,7 +62,7 @@ cp -R /root/mz_automanga/extensions /root/mz_automanga/src /root/mz_automanga/pr
 ```text
 /manga init --script ./script.md        # 单个文件
 /manga init --script ./chapters/        # 目录：递归合并 .md/.markdown/.txt/.text
-# 或交互式：/manga init   → 输入剧本路径 → 书名 → 选择画风/比例
+# 或交互式：/manga init   → 输入剧本路径 → 书名 → 画风/比例 → 改编等级
 
 /manga key            # 第一次出图前设置 Agnes API Key
 /manga next           # 推进：剧本分析
@@ -74,7 +74,7 @@ cp -R /root/mz_automanga/extensions /root/mz_automanga/src /root/mz_automanga/pr
 
 ```
 init
- → script_analysis（剧本分析师自判形态并拆解）
+ → script_analysis（先确定改编等级；剧本分析师自判形态并拆解）
  → [script_gate]（有问题才逐条询问；可“按建议假设继续”）
  → design（导演产出 bible）
  → cast（角色设计师写立绘提示词）
@@ -95,7 +95,7 @@ init
 
 | 命令 | 作用 |
 |---|---|
-| `/manga init [--script <文件\|目录>] [--title <书名>] [--style <preset>]` | 新建项目；无参数时进入交互 |
+| `/manga init [--script <文件\|目录>] [--title <书名>] [--style <preset>] [--adaptation strict\|balanced\|free]` | 新建项目；无参数时进入交互；改编等级未给出时会在首次剧本分析前询问 |
 | `/manga status` | 阶段、页/格、闸门、Web 地址 |
 | `/manga next` / `/manga step` | 后台推进下一阶段 |
 | `/manga run-all` | 后台跑完剩余流程 |
@@ -144,7 +144,7 @@ init
 默认工作区 `<cwd>/.automanga/projects/<slug>/`：
 
 ```
-project.json              标题、画风、比例、尺寸、闸门
+project.json              标题、画风、比例、尺寸、改编等级、闸门
 state.json                阶段、闸门、运行记录、统计
 source/script.md          用户剧本（目录输入已合并，带 `# ===== 文件 =====` 分隔）
 source/inputs.json        原始输入路径、是否目录、文件清单
@@ -179,6 +179,24 @@ exports/<slug>.cbz        可选：漫画 CBZ
 clean black comic lettering, rounded white speech bubbles with thin black outlines,
 no watermark, no signature, no text other than the specified lettering
 ```
+
+## 改编等级
+
+创建项目时（或首次剧本分析前）必须选择剧本整理与分镜的改编程度：
+
+| 等级 | 名称 | 规则 |
+|---|---|---|
+| `strict` | 完全尊重剧本 | 不新增/改动剧情、人物、关键对白与结局；只做分场、可视化与必要顺序整理 |
+| `balanced` | 适当调整改写 | 保留主线、关键事实/台词与结局；可调整节奏、合并/拆分场景，补充过渡、旁白与心理活动 |
+| `free` | 由 agent 按需自由调整 | 以剧本为素材，按漫画节奏自由重组，可增补过渡、反应、旁白、心理活动与对白 |
+
+空镜与文字规则：
+
+- 纯空镜 = 无角色且无对白/旁白/心理活动的格子。
+- 每页最多 1 个纯空镜，禁止连续两格纯空镜；超限会触发分镜校验重试。
+- 纯空镜必须承担转场/时间/情绪变化，并补一条 `narration` 或 `thought`。
+- 原文只有景物描写时，优先补角色反应、心理活动或说明性旁白；旁白 ≤20 汉字，心理活动按对白 ≤14 汉字。
+- QA 会报告纯空镜与连续空镜，便于在出图前复查。
 
 ## API Key
 
@@ -232,10 +250,10 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
 ## 测试
 
 ```bash
-node --experimental-strip-types --test tests/*.test.ts   # 41 个用例
+node --experimental-strip-types --test tests/*.test.ts   # 43 个用例
 ```
 
-测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering 校验、黑白画风颜色锁与灰度兜底、Agnes 重试与流式下载上限、图片压缩到 <500 KB、Web 只读方法白名单/默认 0.0.0.0/SSE/Range/中文路径/人设图、ZIP/CBZ 导出、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过。
+测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering/空镜校验、改编等级与提示词注入、黑白画风颜色锁与灰度兜底、Agnes 重试与流式下载上限、图片压缩到 <500 KB、Web 只读方法白名单/默认 0.0.0.0/SSE/Range/中文路径/人设图、ZIP/CBZ 导出、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过。
 
 ## 已知限制
 

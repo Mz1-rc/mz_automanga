@@ -38,7 +38,7 @@ interface Parsed {
 }
 
 const BOOLEAN_FLAGS = new Set(["force", "final", "open", "regen", "test", "vision", "no-export", "cbz"]);
-const VALUE_FLAGS = new Set(["script", "dir", "title", "style", "custom", "ratio", "host", "port", "note", "key", "auto"]);
+const VALUE_FLAGS = new Set(["script", "dir", "title", "style", "custom", "ratio", "adaptation", "host", "port", "note", "key", "auto"]);
 
 export function parseArgs(input: string): Parsed {
 	const tokens: string[] = [];
@@ -84,6 +84,7 @@ function bool(flags: Record<string, string | boolean>, name: string): boolean {
 const HELP = `mz_automanga · 多 Agent 漫画流水线
 
   /manga init [--script <文件|目录>] [--title <书名>] [--style <preset>]
+              [--adaptation strict|balanced|free]
   /manga status
   /manga next              推进下一阶段（后台）
   /manga step              只执行下一步（后台）
@@ -136,6 +137,7 @@ export async function handleMangaCommand(
 					style: str(flags, "style"),
 					customPrompt: str(flags, "custom"),
 					ratio: str(flags, "ratio") as never,
+					adaptation: str(flags, "adaptation"),
 				});
 				return;
 			}

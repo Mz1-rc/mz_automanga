@@ -175,6 +175,8 @@ export function validatePage(
 		issues.push("每页必须是 3–6 格");
 	}
 	const ids = new Set<string>();
+	let emptyPanels = 0;
+	let previousEmpty = false;
 	for (const [index, panel] of (page.panels ?? []).entries()) {
 		const label = `${page.id}/${panel?.id || `panel[${index}]`}`;
 		if (!/^panel-\d{2}$/.test(String(panel?.id ?? ""))) issues.push(`${label} 的 id 必须是 panel-XX`);
@@ -191,6 +193,15 @@ export function validatePage(
 			}
 		}
 		const dialogue = Array.isArray(panel?.dialogue) ? panel.dialogue : [];
+		const pureEmpty = (panel?.characters?.length ?? 0) === 0 && dialogue.length === 0;
+		if (pureEmpty) {
+			emptyPanels += 1;
+			if (emptyPanels > 1) {
+				issues.push(`${label} 是第 ${emptyPanels} 个纯空镜（每页最多 1 个），请补旁白/心理活动或合并`);
+			}
+			if (previousEmpty) issues.push(`${label} 与上一格连续纯空镜，请插入角色反应或说明文字`);
+		}
+		previousEmpty = pureEmpty;
 		if (dialogue.length > 2) issues.push(`${label} 的对白超过 2 条（文字进图，必须拆格）`);
 		for (const [di, line] of dialogue.entries()) {
 			if (!DIALOGUE_TYPES.has(line.type)) issues.push(`${label} dialogue[${di}] 的 type 非法`);

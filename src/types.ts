@@ -50,6 +50,36 @@ export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhi
 export const STYLE_PRESETS = ["manga-bw", "manhua-color", "webtoon", "custom"] as const;
 export type StylePreset = (typeof STYLE_PRESETS)[number];
 
+export const ADAPTATION_LEVELS = ["strict", "balanced", "free"] as const;
+export type AdaptationLevel = (typeof ADAPTATION_LEVELS)[number];
+
+export interface AdaptationInfo {
+	label: string;
+	summary: string;
+	guidance: string;
+}
+
+export const ADAPTATION_INFO: Record<AdaptationLevel, AdaptationInfo> = {
+	strict: {
+		label: "完全尊重剧本",
+		summary: "不新增或改动剧情、人物、关键对白与结局。",
+		guidance:
+			"严格保留原剧本的情节、人物关系、关键对白与结局；只做分场、可视化与必要的顺序整理，不新增剧情或改写台词；原文已有叙述可转为旁白。",
+	},
+	balanced: {
+		label: "适当调整改写",
+		summary: "保留主线与关键台词，可调整节奏、补充过渡与心理活动。",
+		guidance:
+			"保留主线、人物关系、关键事实、关键台词与结局；可合并/拆分场景、压缩重复、调整叙事顺序，补充过渡、旁白与心理活动，把不适合画面的内容改写成可画、可 lettering 的表达。",
+	},
+	free: {
+		label: "由 agent 按需自由调整",
+		summary: "以剧本为素材，按漫画节奏自由重组、增补与改写。",
+		guidance:
+			"以原剧本为素材，按漫画阅读节奏自由重组场景与分镜；可增补过渡、旁白、心理活动、反应镜头与对白，可合并/拆分/改写段落；保持核心人物、主线气质与结局方向。",
+	},
+};
+
 export type GatePolicy = "auto" | "always" | "off";
 
 export interface StyleSelection {
@@ -131,6 +161,8 @@ export interface MangaProject {
 	updatedAt: string;
 	language: string;
 	style: StyleSelection;
+	/** User-selected fidelity when turning the script into a comic. */
+	adaptation?: AdaptationLevel;
 	image: ImageConfig;
 	gates: Record<GateId, GatePolicy>;
 	agents: AgentConfig;

@@ -25,6 +25,13 @@
 | 4 | 剧本分析完成后标记通过 | 分析完成且无需澄清时立即 `recordGate("script", "approved")`；只有存在待确认问题才保持 pending。见 §6.3 |
 | 5 | Web 中文路径 404 | 页面快照媒体路径补上 `pages/` 前缀；前端对 slug 与文件路径逐段编码，服务端单次解码。见 §9.2 |
 
+### v0.7（本轮，已实现）
+
+| # | 要求 | 本版处理 |
+|---|---|---|
+| 1 | 剧本/分镜减少空镜并补充文字 | `script_analyst` 与 `storyboard` 任务提示词新增空镜控制；分镜校验限制每页最多 1 个纯空镜、禁止连续纯空镜；QA 输出纯空镜警告。见 §6.3、§6.5 |
+| 2 | 剧本整理前由用户选择三档改编等级 | `project.adaptation` 保存 `strict` / `balanced` / `free`；`init` 交互选择并支持 `--adaptation`，首次剧本分析前若未设置会再次询问；等级写入所有角色任务事实，并影响剧本分析/分镜规则。见 §6.3、§6.4 |
+
 ### v0.6（本轮，已实现）
 
 | # | 要求 | 本版处理 |
@@ -47,7 +54,7 @@
 - 已实现：嵌套 `AgentSession` 单飞运行器、`save_artifact` 白名单与快照、hash 缓存/续跑、Agnes 流式下载与重试、只读 Web（网格 + 单页 + 人设，默认 0.0.0.0，无 token）。
 - 预留（未实现）：视觉 QA（`qa.vision` 目前只记录，不调用视觉模型）、TUI 内真图预览、PDF 导出、Web 写操作。
 - 实测：真实模型跑通“剧本 → 分析 → 澄清 → bible → 角色 → 3 页 15 格分镜 → 15 格 lettering 提示词”；用 mock Agnes 跑通出图、QA、CBZ 与 Web（15/15 done）。
-- 测试：41 个用例通过（状态/锁、工件与 schema、lettering 校验、Agnes 重试与流式上限、Web 只读方法白名单/SSE/Range、图片压缩、ZIP/CBZ、完整流水线与缓存跳过、剧本文件/目录读取）。
+- 测试：43 个用例通过（状态/锁、工件与 schema、lettering/空镜校验、改编等级与提示词注入、Agnes 重试与流式上限、Web 只读方法白名单/SSE/Range、图片压缩、ZIP/CBZ、完整流水线与缓存跳过、剧本文件/目录读取）。
 
 ### v0.2（已确认）
 
@@ -481,6 +488,7 @@ mz_automanga/
     "ratio": "3:4",
     "lockedTokens": ["no watermark", "no signature", "no text other than the specified lettering"]
   },
+  "adaptation": "balanced",
   "image": {
     "model": "agnes-image-2.5-flash",
     "draftSize": "1K",
@@ -840,7 +848,7 @@ for each issue:
 - 每个 issue 必须有 `id/question/severity/options(≥2)/assumption`。
 - 问题数 > 5 → 校验失败，要求合并（防止用提问代替创作）。
 
-### 6.4 画风选择流程（新增）
+### 6.4 画风与改编等级选择流程
 
 `/manga init` 的顺序：
 
@@ -850,13 +858,21 @@ for each issue:
 
 | 选项 | preset | 默认比例 | stylePrompt 骨架 |
 |---|---|---|---|
-| 黑白漫画 | `manga-bw` | `3:4` | modern seinen manga, clean confident lineart, screentone shading, high contrast, cinematic composition |
+| 黑白漫画 | `manga-bw` | `3:4` | modern seinen manga in strict black and white, monochrome ink, screentone, no color |
 | 全彩国漫 | `manhua-color` | `3:4` | Chinese manhua, full color, cel shading, crisp outlines, vibrant but controlled palette |
 | 竖屏条漫 | `webtoon` | `9:16` | Korean webtoon style, full color, soft gradients, vertical composition, generous negative space |
 | 自定义 | `custom` | `3:4` | 用户输入（`ctx.ui.editor`），系统追加 lockedTokens |
 
 4. 若自定义：再问比例（`3:4` / `2:3` / `9:16` / `1:1`）。
-5. 写入 `project.json.style`，进入 `script_analysis`。
+5. **改编等级选择**（`ctx.ui.select`，也可用 `--adaptation strict|balanced|free`）：
+
+| 等级 | 名称 | 规则 |
+|---|---|---|
+| `strict` | 完全尊重剧本 | 不新增/改动剧情、人物、关键对白与结局；只做分场、可视化与必要顺序整理 |
+| `balanced` | 适当调整改写 | 保留主线、关键事实/台词与结局；可调整节奏、补充过渡/旁白/心理活动 |
+| `free` | 由 agent 按需自由调整 | 以剧本为素材，按漫画节奏重组，可增补过渡、反应、旁白、心理活动与对白 |
+
+6. 写入 `project.json.style` 与 `project.json.adaptation`，进入 `script_analysis`。若旧项目没有 `adaptation`，在首次 `script_analysis` 前再次询问；非交互运行默认 `balanced`。
 
 所有预设都追加 lettering 约束（不再禁止文字）：
 
@@ -872,7 +888,14 @@ no watermark, no signature, no text other than the specified lettering
 - 切换后把 `cast/storyboard/final` 闸门重置为 `pending`，阶段回退到 `design`。
 - `director` 任务提示词中 `style` 是硬约束：必须把用户选择的 `stylePrompt` 原样放入 `bible.art.stylePrompt`，不得删改 lockedTokens。
 
-### 6.5 闸门总表
+### 6.5 空镜与文字控制
+
+- `script_analyst`：每个 beat 必须有画面锚点；只有环境描写的节拍要补原文旁白或按改编等级补说明，不能连续留下纯空场景。
+- `storyboard`：纯空镜 = `characters` 为空且 `dialogue` 为空；每页最多 1 个，禁止连续两格；纯空镜必须补 `narration`/`thought`。
+- `validatePage` 把“每页超过 1 个纯空镜”“连续两格纯空镜”作为校验错误，促使分镜师补文字或合并；QA 同时输出纯空镜警告。
+- `narration`/`thought` 与对白一样进入 `dialogue[]`，由 `prompt_artist` 转成 lettering 画进图里。
+
+### 6.6 闸门总表
 
 | Gate ID | 阶段 | 默认 | 通过后 | 选项 |
 |---|---|---|---|---|
@@ -888,7 +911,7 @@ no watermark, no signature, no text other than the specified lettering
 - 全自动模式：所有闸门自动通过；`script` 的 blocker 与校验失败例外。
 - 闸门状态与 runId 写入 `state.json`，可审计。
 
-### 6.6 校验、重试与修复
+### 6.7 校验、重试与修复
 
 `runRoleWithRetry(role)`：
 
@@ -1267,7 +1290,7 @@ export async function runRole(options: RoleRunOptions): Promise<RoleRunResult> {
 
 | 命令 | 作用 |
 |---|---|
-| `/manga init [--script <文件\|目录>] [--title <t>] [--style <preset>]` | 新建项目：读取剧本 → 书名 → 画风选择 |
+| `/manga init [--script <文件\|目录>] [--title <t>] [--style <preset>] [--adaptation strict\|balanced\|free]` | 新建项目：读取剧本 → 书名 → 画风 → 改编等级 |
 | `/manga next` | 后台推进下一阶段（立即返回） |
 | `/manga step` | 后台只执行下一个角色或代码阶段 |
 | `/manga run <role>` | 后台运行当前阶段对应的角色 |
@@ -1542,6 +1565,7 @@ no watermark, no signature, no text other than the specified lettering
 | Web 鉴权 | 无 token；默认 `0.0.0.0`；框架层只读，仅 GET/HEAD |
 | 剧本澄清 | 优先逐条回答；可“按假设继续”；答案写入 `clarifications.md` |
 | 画风 | `init` 时选择；默认 `manga-bw`、`3:4` |
+| 改编等级 | `init` 时选择；未选择时首次剧本分析前询问；非交互默认 `balanced` |
 | 页/格 | 每页 3–6 格；每格 ≤2 个气泡、每条 ≤14 汉字 |
 | 剧本输入 | `--script <文件|目录>`；目录递归读取 `.md/.markdown/.txt/.text`，按自然顺序合并；不再接受粘贴/命令行正文 |
 | 工作区 | `<cwd>/.automanga/` |

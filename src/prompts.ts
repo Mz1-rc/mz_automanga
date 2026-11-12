@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { composeStylePrompt, LETTERING_STYLE, type MangaConfig } from "./config.ts";
 import { fileExists, readJson } from "./paths.ts";
-import type { Bible, MangaPage, MangaProject, RoleId, ScriptAnalysis } from "./types.ts";
+import { ADAPTATION_INFO, type Bible, type MangaPage, type MangaProject, type RoleId, type ScriptAnalysis } from "./types.ts";
 import { countChars } from "./paths.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -34,8 +34,36 @@ export interface TaskPromptOptions {
 	repairTargets?: string[];
 }
 
+function adaptationOf(project: MangaProject) {
+	return project.adaptation && ADAPTATION_INFO[project.adaptation] ? project.adaptation : "balanced";
+}
+
+function adaptationRules(project: MangaProject): string[] {
+	const level = adaptationOf(project);
+	const info = ADAPTATION_INFO[level];
+	const lines = [`## 改编等级：${info.label}（${level}）`, `- ${info.guidance}`];
+	if (level === "strict") {
+		lines.push(
+			"- 不得新增/删除角色、情节、关键对白或结局；不得为了戏剧效果改写事实。",
+			"- 可以把原文叙述转成旁白/说明；只为可视化补最短必要的动作与场景描述。",
+		);
+	} else if (level === "balanced") {
+		lines.push(
+			"- 可合并/拆分场景、压缩重复、调整叙事顺序，补充过渡、旁白、心理活动与环境说明。",
+			"- 关键对白尽量保留原文；非关键对白可改写，但不得改变人物关系、事实与结局。",
+		);
+	} else {
+		lines.push(
+			"- 可按漫画节奏自由重组场景与分镜，增补过渡、反应镜头、旁白、心理活动与新对白。",
+			"- 保持核心人物、主线气质与结局方向，不要引入无关的新主线。",
+		);
+	}
+	return lines;
+}
+
 function factLines(project: MangaProject, options: TaskPromptOptions): string[] {
 	const style = composeStylePrompt(project.style);
+	const level = adaptationOf(project);
 	const analysis = readJson<ScriptAnalysis>(join(options.projectRoot, "source", "analysis.json"));
 	const bible = readJson<Bible>(join(options.projectRoot, "bible.json"));
 	return [
@@ -43,6 +71,7 @@ function factLines(project: MangaProject, options: TaskPromptOptions): string[] 
 		`- 语言：${project.language}`,
 		`- 画风：${project.style.label}（${project.style.preset}，${project.style.ratio}）`,
 		`- 画风锁定串（必须逐字使用）：${style}`,
+		`- 改编等级：${ADAPTATION_INFO[level].label}（${level}）— ${ADAPTATION_INFO[level].guidance}`,
 		`- lettering 风格：${LETTERING_STYLE}`,
 		`- 剧本形态：${analysis?.format ?? "尚未分析"}`,
 		`- 预计页数：${analysis?.pageEstimate ?? "未定"}`,
@@ -192,7 +221,7 @@ function schemaQa(): string {
 }
 
 function roleTask(options: TaskPromptOptions): string {
-	const { role, projectRoot, pageId, pageIndex } = options;
+	const { role, project, projectRoot, pageId, pageIndex } = options;
 	switch (role) {
 		case "script_analyst":
 			return [
@@ -203,6 +232,14 @@ function roleTask(options: TaskPromptOptions): string {
 				"4. 最多 5 个问题，按影响排序；每个问题必须有 2–4 个选项和一个默认 assumption。",
 				"5. 不要向用户提问。把问题写进 issues；用户回答后会重新运行你。",
 				"6. source/analysis.json 和 source/scenes.json 都要保存；scenes.json 是 analysis.scenes 的独立副本，内容为数组。",
+				"7. 按任务事实中的改编等级处理剧本；等级越高，越可以补写过渡、旁白与心理活动。",
+				"",
+				...adaptationRules(project),
+				"",
+				"## 空镜控制",
+				"- 每个 scene 的 beats 必须包含可画的动作、关键物件或可 lettering 的文本。",
+				"- 只有环境描写的节拍，要补原文已有的旁白/心理活动；没有原文依据时按改编等级补一条说明，避免留下纯空场景。",
+				"- 不要连续安排多个只有天气/环境、没有人物动作或可读文字的节拍。",
 				"",
 				"## 输出契约",
 				"### source/analysis.json",
@@ -257,7 +294,16 @@ function roleTask(options: TaskPromptOptions): string {
 				"4. characters[].id 必须在 bible.cast 中；outfit 必须是该角色 outfits 的键。",
 				"5. 每格 ≤2 条对白；每条 ≤14 汉字（旁白 ≤20）；每条必须给出 bubble.position/shape/tail。",
 				"6. 超长对白必须拆格或精简，不得丢失关键信息。",
-				"7. 不要写 prompt / refs / image 字段（留给提示词美术与出图阶段）；image.status 写 pending。",
+				"7. narration/thought 也要作为 dialogue 写入，并给出 bubble（旁白可用 box，心理活动用 cloud）；后续会画进图里。",
+				"8. 不要写 prompt / refs / image 字段（留给提示词美术与出图阶段）；image.status 写 pending。",
+				"",
+				...adaptationRules(project),
+				"",
+				"## 空镜与文字（重点）",
+				"- 纯空镜 = characters 为空且 dialogue 为空；每页最多 1 个纯空镜，禁止连续两格纯空镜。",
+				"- 纯空镜必须承担转场/时间/情绪变化，并补 1 条 narration 或 thought；旁白 ≤20 汉字，心理活动按对白 ≤14 汉字。",
+				"- 原文只有景物描写时，优先补角色反应、心理活动或说明性旁白，再决定要不要空镜。",
+				"- 尽量避免整页无字；动作/反应格可用简短旁白或心理活动补足信息，但不得改写关键事实。",
 				"",
 				"## 输出契约",
 				"```json",
@@ -270,7 +316,7 @@ function roleTask(options: TaskPromptOptions): string {
 			return [
 				`## 本次任务：提示词美术（${id}）`,
 				`1. 读取 pages/${id}.json 与 bible.json。`,
-				"2. 读取后原样保留剧情、分镜、对白；只补全每格的 promptCore / refs / lettering / prompt / negative。",
+				"2. 读取后原样保留剧情、分镜、对白；只补全每格的 promptCore / refs / lettering / prompt / negative。narration/thought 同样必须生成 lettering，不要遗漏。",
 				"3. 拼接顺序：shot + camera → 角色 canonical + outfit + pose + expression → action → 场景/时间 → 光线 → 构图与留白 → Lettering → stylePrompt（逐字）→ Avoid 句。",
 				"4. Lettering 必须逐字包含每条 dialogue.text（含标点），并写明气泡位置、形状、尾巴指向、文字颜色与字体风格。",
 				`5. 每条文字 ≤14 汉字；超长不要删字，直接报告校验错误。`,
@@ -290,7 +336,7 @@ function roleTask(options: TaskPromptOptions): string {
 			return [
 				"## 本次任务：审校",
 				"1. 读取 pages/*.json 与 bible.json。",
-				"2. 检查：每页 3–6 格、角色 id 存在、对白 ≤2 条且 ≤14 字、每格有 bubble、每格 prompt 包含全部对白原文与 lettering 锁定词、refs 文件存在。",
+				"2. 检查：每页 3–6 格、角色 id 存在、对白 ≤2 条且 ≤14 字、每格有 bubble、每格 prompt 包含全部对白原文与 lettering 锁定词、refs 文件存在；统计纯空镜是否连续或过多，并建议补旁白/心理活动。",
 				"3. 不修改页面文件，只写 qa/report.json 与 qa/report.md。",
 				"4. repairTargets 只列出确实需要重画/改提示词的格子。",
 				pages,

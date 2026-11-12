@@ -38,8 +38,9 @@ test("actionInit reads a directory of script files and records the input manifes
 	writeFileSync(join(scriptDir, "01.md"), "# 一\n\n雨落。\n");
 	writeFileSync(join(scriptDir, "act-1", "02.txt"), "# 二\n\n天晴。\n");
 	const app = new MangaApp(agentDir);
-	const store = await actionInit(fakeCtx(cwd) as never, app, { scriptPath: scriptDir, style: "manga-bw" });
+	const store = await actionInit(fakeCtx(cwd) as never, app, { scriptPath: scriptDir, style: "manga-bw", adaptation: "strict" });
 	assert.equal(store.project.title, basename(scriptDir));
+	assert.equal(store.project.adaptation, "strict");
 	const script = store.readScript();
 	assert.match(script, /雨落/);
 	assert.match(script, /天晴/);

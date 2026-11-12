@@ -231,6 +231,7 @@ test("pipeline runs end-to-end with a fake runner and mock Agnes, then skips cac
 			assert.match(prompt, /COLOR LOCK|BLACK AND WHITE/i, "every Agnes request must carry the mono style lock");
 		}
 		assert.equal(reloaded.gate("script").status, "approved", "completed script analysis should mark the gate approved");
+		assert.equal(reloaded.project.adaptation, "balanced", "non-interactive runs fall back to balanced");
 
 		const second = await generatePanelImages({
 			store: reloaded,
@@ -265,6 +266,26 @@ test("sub-agent progress streams live token and context usage", async () => {
 	assert.equal(store.gate("script").status, "approved");
 	assert.ok(ui.state.usages.some((usage) => usage.input === 1234 && usage.output === 567));
 	assert.ok(ui.state.status.some((status) => status.contextTokens === 4321 && status.contextPercent === 23));
+});
+
+test("adaptation level is chosen before script analysis and passed to prompts", async () => {
+	const { cwd, store, config } = makeTestProject();
+	const ui = fakeUi({
+		selectHandler: (_title, options) => options.find((option) => option.includes("自由调整")) ?? options[0],
+	});
+	ui.hasUI = true;
+	let taskPrompt = "";
+	const baseRunner = fakeRunner();
+	const runner: RoleRunner = async (options) => {
+		taskPrompt = options.taskPrompt;
+		return baseRunner(options);
+	};
+	const pipeline = new MangaPipeline({ store, config, ui, agentDir: cwd, runner });
+	await pipeline.next();
+	assert.equal(store.project.adaptation, "free");
+	assert.equal(store.state.phase, "design");
+	assert.match(taskPrompt, /改编等级：由 agent 按需自由调整/);
+	assert.match(taskPrompt, /空镜控制/);
 });
 
 test("script gate records assumptions when the user chooses to continue", async () => {

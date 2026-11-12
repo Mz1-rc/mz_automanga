@@ -98,6 +98,11 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 			style: Type.Optional(
 				StringEnum(["manga-bw", "manhua-color", "webtoon", "custom"], { description: "画风预设" }),
 			),
+			adaptation: Type.Optional(
+				StringEnum(["strict", "balanced", "free"], {
+					description: "剧本整理与分镜改编程度：strict=完全尊重剧本，balanced=适当调整改写，free=agent 自由调整",
+				}),
+			),
 			role: Type.Optional(Type.String({ description: "run_role / configure 的角色 id" })),
 			page: Type.Optional(Type.String({ description: "regen_panel / prompt_panel 的页，如 page-001" })),
 			panel: Type.Optional(Type.String({ description: "regen_panel / prompt_panel 的格，如 panel-02" })),
@@ -132,10 +137,12 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 						title: params.title,
 						scriptPath: params.script_path,
 						style: params.style,
+						adaptation: params.adaptation,
 					});
 					return text(`已创建《${store.project.title}》（${store.project.slug}）。下一步：next。`, {
 						slug: store.project.slug,
 						style: store.project.style,
+						adaptation: store.project.adaptation,
 					});
 				}
 				case "status":
