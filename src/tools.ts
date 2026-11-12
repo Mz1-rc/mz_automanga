@@ -6,6 +6,7 @@ import {
 	actionApprove,
 	actionAuto,
 	actionCast,
+	actionCompress,
 	actionDoctor,
 	actionExport,
 	actionInit,
@@ -56,6 +57,7 @@ const ACTIONS = [
 	"open",
 	"rollback",
 	"export",
+	"compress_images",
 	"list",
 	"help",
 ] as const;
@@ -64,8 +66,9 @@ const HELP = `manga_team 动作：
 init / status / next / step / run_all / run_role / approve / revise
 web / web_stop / web_status / regen_panel / prompt_panel / cast / qa
 style / configure / set_auto / pause / resume / abort / doctor / open
-rollback / export / list
+rollback / export / compress_images / list
 
+export 默认导出图片 ZIP；export_format="cbz" 可导出 CBZ。
 web 需要显式端口（--port），不会随机分配。`;
 
 function text(value: string, details: Record<string, unknown> = {}) {
@@ -107,6 +110,9 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 				StringEnum(["start", "stop", "status", "restart"], { description: "web 子动作，默认 start" }),
 			),
 			model: Type.Optional(Type.String({ description: "configure 的模型 provider/id" })),
+			export_format: Type.Optional(
+				StringEnum(["zip", "cbz"], { description: "export 的打包格式；默认 zip（仅图片的普通 zip）" }),
+			),
 			auto: Type.Optional(Type.Boolean({ description: "set_auto 开启/关闭全自动" })),
 			run_id: Type.Optional(Type.String({ description: "rollback 的运行快照 id" })),
 			slug: Type.Optional(Type.String({ description: "open 的项目 slug" })),
@@ -195,7 +201,9 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 				case "rollback":
 					return text(actionRollback(actionCtx, app, params.run_id));
 				case "export":
-					return text(actionExport(actionCtx, app));
+					return text(actionExport(actionCtx, app, params.export_format === "cbz" ? "cbz" : "zip"));
+				case "compress_images":
+					return text(actionCompress(actionCtx, app));
 				default:
 					return text(`未知 action: ${action}`);
 			}

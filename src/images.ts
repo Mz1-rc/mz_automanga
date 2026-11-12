@@ -9,6 +9,7 @@ import {
 	type MangaConfig,
 } from "./config.ts";
 import { panelRelPath, readText, resolveWithin, sha256, writeAtomic } from "./paths.ts";
+import { ensureWebPreview } from "./previews.ts";
 import type { ProjectStore } from "./state.ts";
 import type { CastMember, MangaPage, Panel } from "./types.ts";
 import { toMonochromePng } from "./util/png-grayscale.ts";
@@ -145,6 +146,7 @@ export async function generateCharacterImages(options: ImageStageOptions): Promi
 			});
 			if (isMonochromeStyle(style)) toMonochromePng(abs);
 			writeSourceUrl(store.root, rel, result.sourceUrl);
+			ensureWebPreview(store.root, rel);
 			done++;
 			options.onProgress?.({ kind: "char-done", label, index: index + 1, total });
 		} catch (error) {
@@ -250,6 +252,7 @@ export async function generatePanelImages(options: ImageStageOptions): Promise<{
 			});
 			if (isMonochromeStyle(store.project.style)) toMonochromePng(abs);
 			writeSourceUrl(store.root, rel, result.sourceUrl);
+			ensureWebPreview(store.root, rel);
 			panel.image = {
 				status: "done",
 				file: rel,
@@ -336,6 +339,7 @@ export async function regeneratePanel(options: ImageStageOptions & { key: string
 	});
 	if (isMonochromeStyle(store.project.style)) toMonochromePng(abs);
 	writeSourceUrl(store.root, rel, result.sourceUrl);
+	ensureWebPreview(store.root, rel);
 	panel.image = {
 		status: "done",
 		file: rel,

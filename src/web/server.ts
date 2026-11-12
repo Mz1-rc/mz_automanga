@@ -4,6 +4,7 @@ import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { MangaConfig } from "../config.ts";
 import { readJson, resolveWithin } from "../paths.ts";
+import { selectWebMediaPath } from "../previews.ts";
 import { listProjects, ProjectStore } from "../state.ts";
 import type { Bible, MangaPage } from "../types.ts";
 
@@ -298,7 +299,9 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
 					const slug = decodeURIComponent(media[1]);
 					const rel = decodeURIComponent(media[2]);
 					const store = ProjectStore.load(options.cwd, options.config, slug);
-					const abs = safeMediaPath(store.root, rel);
+					// Prefer the compressed .web copy when it is fresh; HTTP handlers
+					// never create previews themselves.
+					const abs = selectWebMediaPath(store.root, rel, safeMediaPath);
 					if (!abs) {
 						sendText(res, 404, "404 Not Found");
 						return;

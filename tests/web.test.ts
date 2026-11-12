@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_CONFIG, DEFAULT_WEB, normalizeConfig } from "../src/config.ts";
-import { freePort, makeTestProject, writeTinyPng } from "./helpers.ts";
+import { ensureProjectWebPreviews } from "../src/previews.ts";
+import { freePort, makeTestProject, writeNoisyPng, writeTinyPng } from "./helpers.ts";
 import { startWebServer } from "../src/web/server.ts";
 
 function mediaPath(slug: string, file: string): string {
@@ -141,6 +142,43 @@ test("web defaults to 0.0.0.0, has no token, and rejects every mutation method",
 			assert.equal(response.headers.get("allow"), "GET, HEAD");
 		}
 		assert.equal(existsSync(join(cwd, ".automanga", "web-token.txt")), false);
+	} finally {
+		await handle.close();
+	}
+});
+
+test("web media serves a compressed preview under 500 KB", async () => {
+	const { cwd, store, config } = makeTestProject();
+	const rel = "pages/page-001/panel-01.png";
+	store.writePage({
+		schemaVersion: 1,
+		id: "page-001",
+		index: 1,
+		summary: "s",
+		panels: [
+			{
+				id: "panel-01",
+				shot: "wide",
+				characters: [],
+				action: "a",
+				dialogue: [],
+				image: { status: "done", file: rel },
+			},
+		],
+	});
+	writeNoisyPng(join(store.root, rel), 800, 1000);
+	const sourceBytes = statSync(join(store.root, rel)).size;
+	assert.ok(sourceBytes > 500_000);
+	const batch = ensureProjectWebPreviews(store);
+	assert.equal(batch.created, 1);
+	const port = await freePort();
+	const handle = await startWebServer({ cwd, config, host: "127.0.0.1", port });
+	try {
+		const response = await fetch(`${handle.url}${mediaPath(store.project.slug, rel)}`);
+		assert.equal(response.status, 200);
+		const body = Buffer.from(await response.arrayBuffer());
+		assert.ok(body.byteLength <= 500_000, `served bytes=${body.byteLength}`);
+		assert.ok(body.byteLength < sourceBytes);
 	} finally {
 		await handle.close();
 	}

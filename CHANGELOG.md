@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- 新增图片压缩工具：Web 预览图自动压缩到 500,000 字节以内，缓存于 `.web/`，不修改原图。
+- Web 网格加大（漫画 360px、人设 320px，最大宽度 1800px），大图阅读更宽。
+- 新增仅图片的普通 ZIP 打包，`build` / `/manga export` / `manga_team export` 默认使用；CBZ 改为 `--cbz` / `export_format=cbz`。
+
 - Web 移除 token/鉴权与 `--no-token`；默认绑定 `0.0.0.0`，旧配置的 `web.token` 自动清理。
 - 框架层强制 Web 只读：仅允许 `GET`/`HEAD`，其他方法在路由前返回 405 + `Allow: GET, HEAD`；测试逐个覆盖写方法。
 

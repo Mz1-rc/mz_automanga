@@ -4,6 +4,7 @@ import {
 	actionApprove,
 	actionAuto,
 	actionCast,
+	actionCompress,
 	actionConfig,
 	actionDoctor,
 	actionExport,
@@ -36,7 +37,7 @@ interface Parsed {
 	flags: Record<string, string | boolean>;
 }
 
-const BOOLEAN_FLAGS = new Set(["force", "final", "open", "regen", "test", "vision", "no-export"]);
+const BOOLEAN_FLAGS = new Set(["force", "final", "open", "regen", "test", "vision", "no-export", "cbz"]);
 const VALUE_FLAGS = new Set(["script", "dir", "title", "style", "custom", "ratio", "host", "port", "note", "key", "auto"]);
 
 export function parseArgs(input: string): Parsed {
@@ -104,7 +105,8 @@ const HELP = `mz_automanga · 多 Agent 漫画流水线
   /manga doctor
   /manga open [slug]
   /manga rollback [runId]
-  /manga export
+  /manga export [--cbz]   导出图片 ZIP（默认）或 CBZ
+  /manga compress         生成 <500 KB 的 Web 预览图
   /manga help
 
 角色：${ROLE_IDS.join(" | ")}
@@ -228,7 +230,10 @@ export async function handleMangaCommand(
 				ctx.ui.notify(actionRollback(ctx, app, rest || undefined), "warning");
 				return;
 			case "export":
-				ctx.ui.notify(actionExport(ctx, app), "info");
+				ctx.ui.notify(actionExport(ctx, app, bool(flags, "cbz") ? "cbz" : "zip"), "info");
+				return;
+			case "compress":
+				ctx.ui.notify(actionCompress(ctx, app), "info");
 				return;
 			default:
 				throw new Error(`未知子命令：${sub}。使用 /manga help 查看用法。`);
@@ -268,6 +273,7 @@ export function registerMangaCommand(pi: ExtensionAPI, app: MangaApp): void {
 				"open",
 				"rollback",
 				"export",
+				"compress",
 				"help",
 			];
 			const items = commands

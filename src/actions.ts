@@ -5,6 +5,8 @@ import { composeStylePrompt, makeStyle, STYLE_PRESETS, type MangaConfig } from "
 import { resolveAgnesKey, maskKey, saveAgnesKey } from "./keys.ts";
 import { ensureDir, listDirs, resolveWithin, writeJsonAtomic } from "./paths.ts";
 import { MangaPipeline, gateIdForPhase, isRole, roleForPhase, roleLabel, pipelineSummary, type PipelineUi } from "./pipeline.ts";
+import type { ImageArchiveFormat } from "./export.ts";
+import { ensureProjectWebPreviews } from "./previews.ts";
 import { listProjects, ProjectStore } from "./state.ts";
 import { readScriptInput } from "./script-input.ts";
 import type { RoleId, StylePreset, StyleSelection } from "./types.ts";
@@ -378,6 +380,18 @@ export async function actionWeb(
 		if (options.open) await openBrowser(pi, webHandle.url);
 		return `Web 预览已在运行：${webHandle.url}`;
 	}
+	if (store) {
+		// Compression happens here (not in an HTTP handler), keeping Web read-only.
+		notify(ctx as never, "正在准备 <500 KB 的 Web 预览图…", "info");
+		const previews = ensureProjectWebPreviews(store);
+		if (previews.created || previews.failed) {
+			notify(
+				ctx as never,
+				`Web 预览图：新生成 ${previews.created}，跳过 ${previews.skipped}${previews.failed ? `，失败 ${previews.failed}` : ""}。`,
+				previews.failed ? "warning" : "info",
+			);
+		}
+	}
 	const handle = await startWebServer({ cwd: ctx.cwd, config, host, port });
 	webHandle = handle;
 	if (options.open ?? config.web.open) await openBrowser(pi, handle.url);
@@ -457,8 +471,12 @@ export function actionPrompt(ctx: ActionCtx, app: AppLike, keyInput: string): st
 	].join("\n");
 }
 
-export function actionExport(ctx: ActionCtx, app: AppLike): string {
-	return startBackground(ctx, app, "导出 CBZ", (pipeline) => pipeline.exportNow());
+export function actionExport(ctx: ActionCtx, app: AppLike, format: ImageArchiveFormat = "zip"): string {
+	return startBackground(ctx, app, `导出 ${format.toUpperCase()}`, (pipeline) => pipeline.exportNow(format));
+}
+
+export function actionCompress(ctx: ActionCtx, app: AppLike): string {
+	return startBackground(ctx, app, "压缩 Web 预览图", (pipeline) => pipeline.compressWebImages());
 }
 
 export function actionQa(ctx: ActionCtx, app: AppLike): string {

@@ -25,6 +25,14 @@
 | 4 | 剧本分析完成后标记通过 | 分析完成且无需澄清时立即 `recordGate("script", "approved")`；只有存在待确认问题才保持 pending。见 §6.3 |
 | 5 | Web 中文路径 404 | 页面快照媒体路径补上 `pages/` 前缀；前端对 slug 与文件路径逐段编码，服务端单次解码。见 §9.2 |
 
+### v0.6（本轮，已实现）
+
+| # | 要求 | 本版处理 |
+|---|---|---|
+| 1 | 编写图片压缩工具，Web 图片 <500 KB | 新增 `src/util/image-compress.ts`：PNG 解码、灰度/彩色检测、box 下采样、自适应行过滤、迭代压缩到 500,000 字节以内；`src/previews.ts` 将结果缓存到 `.web/<相对路径>.png`。见 §9.2、§12.5 |
+| 2 | Web 页面图片更大、适配页面 | 漫画网格从 220px 提升到 360px，最大宽度 1800px；人设图网格提升到 320px；窄屏分档；大图阅读放宽到 `min(96vw, 1500px)`。见 §9.4 |
+| 3 | 增加只有图片的普通 ZIP，并设为默认 | `exportImages()` 支持 `zip`/`cbz`，默认 `zip`；`build`、`/manga export`、`manga_team export` 默认输出 `exports/<slug>.zip`，`--cbz`/`export_format=cbz` 保留 CBZ。见 §10、§17 |
+
 ### v0.5（本轮，已实现）
 
 | # | 要求 | 本版处理 |
@@ -39,7 +47,7 @@
 - 已实现：嵌套 `AgentSession` 单飞运行器、`save_artifact` 白名单与快照、hash 缓存/续跑、Agnes 流式下载与重试、只读 Web（网格 + 单页 + 人设，默认 0.0.0.0，无 token）。
 - 预留（未实现）：视觉 QA（`qa.vision` 目前只记录，不调用视觉模型）、TUI 内真图预览、PDF 导出、Web 写操作。
 - 实测：真实模型跑通“剧本 → 分析 → 澄清 → bible → 角色 → 3 页 15 格分镜 → 15 格 lettering 提示词”；用 mock Agnes 跑通出图、QA、CBZ 与 Web（15/15 done）。
-- 测试：37 个用例通过（状态/锁、工件与 schema、lettering 校验、Agnes 重试与流式上限、Web 只读方法白名单/SSE/Range、CBZ、完整流水线与缓存跳过、剧本文件/目录读取）。
+- 测试：41 个用例通过（状态/锁、工件与 schema、lettering 校验、Agnes 重试与流式上限、Web 只读方法白名单/SSE/Range、图片压缩、ZIP/CBZ、完整流水线与缓存跳过、剧本文件/目录读取）。
 
 ### v0.2（已确认）
 
@@ -82,7 +90,7 @@
 - 默认绑定 `0.0.0.0` 以便局域网查看；无 token、无鉴权，只读边界由框架层强制（仅 `GET`/`HEAD`）。
 - 整个流程适配小内存机器：图片流式落盘、不在内存中缓存图片、逐页运行角色会话。
 - 图像生成使用 Agnes API，API Key 由用户提供。
-- 导出 CBZ，后续可扩展 PDF。
+- 最终打包默认导出**只有图片的普通 ZIP**（`exports/<slug>.zip`），同时保留 CBZ 选项；后续可扩展 PDF。
 
 ### 1.2 非目标（v0.1）
 
@@ -263,7 +271,7 @@ garbled characters, misspelled characters, extra text, watermark, signature, blu
 | 7 | `.runs/<runId>/` 快照 | 出错可复盘，支持回滚 |
 | 8 | 内置 mock Agnes | 全流程零成本测试 |
 | 9 | 预设画风 | 用户一次选择，后面全自动 |
-| 10 | 导出 CBZ + 离线 index.html | 交付方便 |
+| 10 | 导出仅图片 ZIP（默认）+ CBZ + 离线 index.html | 交付方便 |
 | 11 | 文字进图 + 短句约束 | 成图可直接阅读；用字数/气泡数上限控制中文渲染失败率 |
 | 12 | 全链路流式 I/O | 小内存机器也能跑完整本 |
 
@@ -272,11 +280,11 @@ garbled characters, misspelled characters, extra text, watermark, signature, blu
 本机内存较小，因此把“低内存”作为实现约束而不是事后优化：
 
 - **图片永不整块驻留**：只用 `fetch` 的 URL 模式，响应体用流写入临时文件后 `rename`；不保存 base64 到状态、不把图片放进会话上下文。
-- **Web 不做缩略图**：直接流式返回原图，由浏览器缩放；服务端不缓存图片字节。
+- **Web 预览不重打包**：启动时把原图压缩到 `.web/`（≤500,000 字节），媒体请求只流式读取缓存；服务端不在内存中缓存图片字节。
 - **逐页/逐格运行角色**：每次嵌套会话只处理当前页，结束即 `dispose()`；不把整本分镜塞进一个上下文。
 - **日志与预览有上限**：日志按 2 MB 轮转；流式文本只保留末尾 160 字符用于状态栏。
 - **出图严格串行**：同一时间只有 1 个请求、1 个临时文件、1 个解码缓冲。
-- **导出流式打包**：CBZ 逐文件读取、逐块计算 CRC、直接写入目标文件。
+- **导出流式打包**：ZIP/CBZ 逐文件读取、逐块计算 CRC、直接写入目标文件。
 
 详细预算与实现见 §12.5。
 
@@ -448,7 +456,8 @@ mz_automanga/
     ├── logs/
     ├── state/
     │   └── index.json            # Web 派生索引（可重建）
-    └── exports/<slug>.cbz
+    ├── .web/<相对路径>.png     # Web 用压缩预览（每张 <500,000 字节）
+    └── exports/<slug>.zip      # 默认；<slug>.cbz 可选
 ```
 
 ---
@@ -778,9 +787,9 @@ idle | intake | script_analysis | script_gate | design | cast | cast_gate
 | 10 | `image_gen` | 代码 | page | PNG | cacheKey、PNG/JPEG、尺寸 |
 | 11 | `qa` | 代码 + 可选 `editor` | 全部 | `qa/report.json` | 结构 + 视觉 |
 | 12 | `repair` | `repairer`（可选 1 轮） | qa + page | 更新目标 page | 只允许改 repairTargets |
-| 13 | `build` | 代码 | 全部 | index、CBZ | 文件齐全 |
+| 13 | `build` | 代码 | 全部 | index、默认仅图片 ZIP | 文件齐全 |
 | 14 | `final_gate` | 宿主 UI | 统计 + 预览 | 闸门记录 | 交付确认 |
-| 15 | `export` | 代码 | — | `exports/<slug>.cbz` | zip 结构 |
+| 15 | `export` | 代码 | — | `exports/<slug>.zip`（默认）或 `.cbz` | zip 结构 |
 
 ### 6.3 剧本分析与澄清闸门（新增，重点）
 
@@ -1189,6 +1198,7 @@ export async function runRole(options: RoleRunOptions): Promise<RoleRunResult> {
 - **端口必须手动指定**：启动时必须提供 `--port`，或在配置中显式设置 `web.port`（默认 0 表示未配置）。**不会随机分配，也不会在占用时自动加 1**；未指定或被占用直接报错并提示换端口。
 - **无 token、无鉴权**：不生成 token、不写 `web-token.txt`、不设置鉴权 cookie；旧配置里的 `web.token` 在加载时自动清理。
 - 启动提示会明确写出“只读、无鉴权、同一网络可访问”；README 同时提示仅在可信网络使用，或显式绑定回环地址。
+- `/manga web start` 在监听端口前调用 `ensureProjectWebPreviews(store)`，把漫画页和人设图压缩到 `.web/`（每张 <500,000 字节）。HTTP handler 只读取该缓存，压缩本身不在请求路径中。
 - `session_shutdown` → `server.close()`；`server.unref()` 不阻塞退出。
 
 ### 9.2 路由（全部只读，只服务图片）
@@ -1201,7 +1211,7 @@ export async function runRole(options: RoleRunOptions): Promise<RoleRunResult> {
 | GET | `/app.js`, `/style.css` | 包内静态资源 |
 | GET | `/api/projects` | 项目列表（slug、标题、页数、完成数） |
 | GET | `/api/project?p=<slug>` | 项目摘要 + 每页图片清单（`page/panel/file/status`）+ 角色人设清单（`characters[]`） |
-| GET | `/media/<slug>/<relpath>` | 图片（PNG/JPEG），支持 Range |
+| GET | `/media/<slug>/<relpath>` | 图片，支持 Range；原图 >500,000 字节时优先返回 `.web/` 中新鲜且 ≤500,000 字节的压缩副本 |
 | GET | `/api/events?p=<slug>` | SSE：`snapshot` / `panel` / `ping` |
 
 **框架层只读约束（硬边界）：**
@@ -1239,8 +1249,8 @@ export async function runRole(options: RoleRunOptions): Promise<RoleRunResult> {
 ```
 
 - **视图切换**：顶部“漫画 / 人设”两个 Tab。漫画按页分组；人设按角色展示 `characters/<id>/ref.png`、姓名与角色定位。
-- **网格**：`CSS grid`，`loading="lazy"`；只显示 `<img>`；生成中显示占位，失败显示“重试中”状态点。
-- **阅读**：点击漫画或人设图进入大图，`←/→` 切换上一张/下一张；`webtoon` 预设纵向滚动。
+- **网格**：漫画列宽从 220px 提升到 360px，人设列宽 320px，容器最大宽度 1800px；980px 以下降为 260/240px，560px 以下降为 160px / 单列；`loading="lazy"`；生成中显示占位，失败显示“重试中”状态点。
+- **阅读**：点击漫画或人设图进入大图，图片最大 `min(96vw, 1500px)`；`←/→` 切换上一张/下一张；`webtoon` 预设纵向滚动。
 - **无叠加**：不渲染气泡、不渲染对白、不做缩放控件、不做编辑；文字已经在 PNG 里。
 - **实时**：`EventSource` 收到 `panel` 事件时只替换对应 `<img>` 的 `src`（加 `?v=<mtime>` 破缓存）。
 - **主题**：深色为主，跟随 `prefers-color-scheme`；窄屏单列。
@@ -1279,7 +1289,8 @@ export async function runRole(options: RoleRunOptions): Promise<RoleRunResult> {
 | `/manga open [slug]` | 列出/切换项目 |
 | `/manga key [--test]` | 设置/测试 Agnes Key |
 | `/manga rollback <runId>` | 用某次运行快照回滚产物 |
-| `/manga export [cbz]` | 导出 |
+| `/manga export [--cbz]` | 导出；默认仅图片普通 ZIP，`--cbz` 导出 CBZ |
+| `/manga compress` | 生成/刷新 <500 KB 的 Web 预览图 |
 | `/manga help` | 帮助 |
 
 参数自动补全：阶段名、slug、`page-00X`、角色 id、画风预设。
@@ -1306,7 +1317,7 @@ pi.registerTool({
 });
 ```
 
-Actions：`init | next | step | run_role | approve | revise | status | web | regen_panel | style | configure | abort | doctor | open | export | run_all | set_auto`。
+Actions：`init | next | step | run_role | approve | revise | status | web | regen_panel | style | configure | abort | doctor | open | export | compress_images | run_all | set_auto`。`export_format` 默认为 `zip`，可设为 `cbz`。
 
 ### 10.3 后台任务（单飞）
 
@@ -1444,13 +1455,14 @@ no watermark, no signature, no text other than the specified lettering
 | 角色会话 | 逐页运行；每次 `createAgentSession` 后 `await prompt()` 并立即 `dispose()`；流式文本只保留末尾 `previewChars`（160）字符 |
 | 上下文 | 不把图片放进会话（无视觉 QA 时）；分镜/审校开启压缩；`read` 只读当前页与必要设定 |
 | 状态写入 | `state.json`/页面 JSON 都是 KB 级；原子写不做全量深拷贝；统计用增量更新 |
-| Web | 媒体用 `createReadStream` + `pipeline()`；不缓存图片字节；JSON 响应上限 256 KB；不做缩略图 |
+| Web | 媒体用 `createReadStream` + `pipeline()`；不缓存图片字节；JSON 响应上限 256 KB；只读取 `.web/` 预览，不请求时压缩 |
+| 图片压缩 | 一次只解码、缩放、编码一张；PNG 编码 level 6；宽高每次缩小 15%，命中 500,000 字节即停止；不并发 |
 | SSE | 只推 `{page,panel,status,file,mtime}` 小对象；不断开长连接 |
-| CBZ | store-only zip；逐文件 1 MB 块读取，流式计算 CRC32，直接写目标文件；绝不把整本图片读进内存 |
+| ZIP/CBZ | store-only zip；逐文件 1 MB 块读取，流式计算 CRC32，直接写目标文件；绝不把整本图片读进内存 |
 | 日志 | 按 2 MB 轮转；只保留尾部；stdout/stderr 不累积全文 |
 | 版本 | `keepVersions` 默认 2；旧版本仅保留文件，不载入内存 |
 
-验收方式：`tests/agnes.test.ts` 断言下载超过上限时立即中止且清理临时文件；`tests/export.test.ts` 逐文件流式打包；出图阶段用 15 格真实分镜 + mock 图片跑通，常驻内存不随格数增长。
+验收方式：`tests/agnes.test.ts` 断言下载超过上限时立即中止且清理临时文件；`tests/export.test.ts` 逐文件流式打包；`tests/compress.test.ts` 断言预览 ≤500,000 字节且可复用；出图阶段用 15 格真实分镜 + mock 图片跑通，常驻内存不随格数增长。
 
 ---
 
@@ -1475,7 +1487,8 @@ no watermark, no signature, no text other than the specified lettering
 | `artifacts.test.ts` | 白名单、禁止目标、JSON 校验、原子写、快照；analysis/bible/page schema；lettering 原文/字数/气泡 |
 | `agnes.test.ts` | payload 结构、URL/b64 两条路径、429 退避、401/400 中止、超时、下载字节上限、流式写入 |
 | `web.test.ts` | 路由、SSE 首帧、默认 0.0.0.0、无 token、路径穿越、POST/PUT/PATCH/DELETE/OPTIONS 均 405、媒体 Range、拒绝端口 0/占用端口 |
-| `export.test.ts` | CBZ 条目、顺序、EOCD |
+| `export.test.ts` | 默认 ZIP/CBZ 条目、顺序、EOCD |
+| `compress.test.ts` | PNG 解码/下采样/压缩到 ≤500,000 字节、`.web` 缓存复用 |
 | `pipeline.e2e.test.ts` | `FakeRoleRunner` + `mock-agnes` 全流程；缓存跳过；剧本闸门“按假设继续” |
 
 `FakeRoleRunner` 通过 `MangaPipeline` 构造参数注入，不启动真实会话；真实模型冒烟测试由临时驱动脚本完成（未纳入仓库）。
@@ -1535,7 +1548,8 @@ no watermark, no signature, no text other than the specified lettering
 | 模型 | 跟随宿主当前模型；可用 `/manga models` 逐角色覆盖 |
 | 出图 | 1K 草稿，`--final` 为 2K；串行；URL 输出 + 流式下载 |
 | 视觉 QA | v0.2 预留；v0.1 只做结构 QA（代码，零 token） |
-| Web | 只读，只显示图片；默认 `0.0.0.0`；无 token/鉴权；网格 + 人设 + 单页阅读；`start/stop/status/restart`；端口必须手动指定，不随机 |
+| Web | 只读，只显示图片；默认 `0.0.0.0`；无 token/鉴权；网格 + 人设 + 单页阅读；预览图 <500,000 字节；`start/stop/status/restart`；端口必须手动指定，不随机 |
+| 最终打包 | 默认 `exports/<slug>.zip`（仅图片普通 ZIP）；`--cbz` 导出 `.cbz` |
 
 若实现中发现这些默认值与 Agnes 的实际文字能力冲突（例如 14 字经常糊），我会先停下来用实测结果向你报告，而不是静默改设计。
 

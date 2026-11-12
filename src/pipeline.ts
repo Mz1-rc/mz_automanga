@@ -6,7 +6,9 @@ import { composeStylePrompt, type MangaConfig } from "./config.ts";
 import { resolveAgnesKey } from "./keys.ts";
 import { generateCharacterImages, generatePanelImages, regeneratePanel } from "./images.ts";
 import { readJson, readText, resolveWithin, writeAtomic, writeJsonAtomic, ensureDir, fileExists, nowIso } from "./paths.ts";
+import { ensureProjectWebPreviews } from "./previews.ts";
 import { buildSystemPrompt, buildTaskPrompt } from "./prompts.ts";
+import type { ImageArchiveFormat } from "./export.ts";
 import { phaseLabel } from "./ui.ts";
 import { recordAssumptions, runReviewGate, runScriptGate as runScriptGateUi, questionsNeedingUser, gatePolicy } from "./gates.ts";
 import type { GateUi } from "./gates.ts";
@@ -710,12 +712,34 @@ export class MangaPipeline {
 		});
 	}
 
-	async exportNow(): Promise<void> {
-		this.beginStage("导出 CBZ");
+	async exportNow(format: ImageArchiveFormat = "zip"): Promise<void> {
+		this.beginStage(`导出 ${format.toUpperCase()}`);
 		await this.locked("code", async () => {
-			const { exportCbz } = await import("./export.ts");
-			const result = await exportCbz({ store: this.store, chunkBytes: this.config.memory.zipChunkBytes });
+			const { exportImages } = await import("./export.ts");
+			const result = await exportImages({
+				store: this.store,
+				format,
+				chunkBytes: this.config.memory.zipChunkBytes,
+			});
 			this.ui.notify(`已导出 ${result.entries} 张画面到 ${result.file}`, "info");
+		});
+	}
+
+	/** Build <500 KB Web previews without changing the original images. */
+	async compressWebImages(): Promise<void> {
+		this.beginStage("压缩 Web 预览图");
+		await this.locked("code", async () => {
+			const result = ensureProjectWebPreviews(this.store, (progress) => {
+				this.report(`压缩 ${progress.rel}（${progress.index}/${progress.total}）`, {
+					step: progress.index,
+					total: progress.total,
+				});
+			});
+			const failed = result.failed ? `，失败 ${result.failed}` : "";
+			this.ui.notify(
+				`Web 预览图：新生成 ${result.created}，跳过 ${result.skipped}${failed}（上限 500 KB）。`,
+				result.failed ? "warning" : "info",
+			);
 		});
 	}
 
@@ -731,13 +755,17 @@ export class MangaPipeline {
 				this.store.refreshStats();
 				if (this.store.state.stats.images === 0) {
 					this.store.finishRun(run.id, { status: "success", note: "没有成功画面，跳过导出" });
-					this.ui.notify("没有任何成功画面，跳过 CBZ 导出。请检查失败原因后 /manga next 重试。", "warning");
+					this.ui.notify("没有任何成功画面，跳过图片导出。请检查失败原因后 /manga next 重试。", "warning");
 					this.store.transition("final_gate");
 					this.ui.updateStatus(this.store);
 					return;
 				}
-				const { exportCbz } = await import("./export.ts");
-				const result = await exportCbz({ store: this.store, chunkBytes: this.config.memory.zipChunkBytes });
+				const { exportImages } = await import("./export.ts");
+				const result = await exportImages({
+					store: this.store,
+					format: "zip",
+					chunkBytes: this.config.memory.zipChunkBytes,
+				});
 				this.store.finishRun(run.id, { status: "success", outputFiles: [result.file] });
 				this.ui.notify(`已导出 ${result.entries} 张画面到 ${result.file}`, "info");
 				this.store.transition("final_gate");
@@ -754,7 +782,7 @@ export class MangaPipeline {
 		const stats = this.store.state.stats;
 		const summary = [
 			`页数：${stats.pages} · 格数：${stats.panels} · 已出图：${stats.images} · 失败：${stats.failedImages}`,
-			`导出：${join(this.store.root, "exports", `${this.project.slug}.cbz`)}`,
+			`导出：${join(this.store.root, "exports", `${this.project.slug}.zip`)}`,
 			"确认后项目标记为完成；如需改某格，请先 /manga regen。",
 		].join("\n");
 		const decision = await runReviewGate({

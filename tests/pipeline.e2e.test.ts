@@ -224,7 +224,7 @@ test("pipeline runs end-to-end with a fake runner and mock Agnes, then skips cac
 		for (let n = 1; n <= 3; n++) {
 			assert.ok(existsSync(join(reloaded.root, "pages", "page-001", `panel-0${n}.png`)));
 		}
-		assert.ok(existsSync(join(reloaded.root, "exports", `${reloaded.project.slug}.cbz`)));
+		assert.ok(existsSync(join(reloaded.root, "exports", `${reloaded.project.slug}.zip`)));
 		assert.equal(mock.requests, 4);
 		assert.ok(mock.prompts.length === 4);
 		for (const prompt of mock.prompts) {

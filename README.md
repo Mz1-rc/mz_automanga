@@ -85,7 +85,7 @@ init
  → prompts（提示词美术把对白转成 lettering 指令）
  → image_gen（逐格串行出图）
  → qa（结构/文字完整性）→ [repair]（可选 1 轮）
- → build（CBZ 导出）
+ → build（默认导出仅图片 ZIP，可选 CBZ）
  → [final_gate] → done
 ```
 
@@ -116,7 +116,8 @@ init
 | `/manga doctor` | 检查状态、锁、文件、Key |
 | `/manga open [slug]` | 列出/切换项目 |
 | `/manga rollback [runId]` | 从运行快照回滚产物 |
-| `/manga export` | 重新导出 CBZ |
+| `/manga export [--cbz]` | 重新导出；默认仅图片普通 ZIP，`--cbz` 导出 CBZ |
+| `/manga compress` | 生成/刷新 Web 用 <500 KB 预览图 |
 
 角色 id：`script_analyst`、`director`、`character_designer`、`storyboard`、`prompt_artist`、`editor`、`repairer`。
 
@@ -156,7 +157,9 @@ pages/page-XXX.json       分镜 + 最终 prompt
 pages/page-XXX/panel-XX.png
 qa/report.json|md         审校报告
 .runs/<runId>/            每次角色运行的 prompt 快照与产物快照
-exports/<slug>.cbz
+.web/<相对路径>.png        Web 压缩预览缓存（每张 <500 KB，不修改原图）
+exports/<slug>.zip        默认：仅图片的普通 ZIP
+exports/<slug>.cbz        可选：漫画 CBZ
 ```
 
 ## 画风
@@ -195,6 +198,8 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
 - **无 token、无鉴权**。请只在可信网络使用，或显式绑定回环地址。
 - **框架层只读**：HTTP 方法白名单仅允许 `GET`/`HEAD`，其他方法在路由前直接返回 405 与 `Allow: GET, HEAD`；页面只提供项目选择、漫画网格、**角色人设图**、单页阅读，没有写接口、不叠加气泡（文字已在 PNG 里）。
 - 媒体地址为 `/media/<项目 slug>/<项目相对路径>`，中文 slug 与文件名会正确 URL 编码；页面快照中的路径自带 `pages/` 前缀。
+- **Web 预览图会压缩到 500,000 字节以下**：`/manga web start` 前自动在 `.web/` 生成缓存；新出图也会自动生成。HTTP 服务只读取压缩缓存，不在请求中写文件。
+- 页面网格已加大，漫画按页展示更大的画面，点击可继续放大阅读；人设图同样适配页面宽度。
 - 图片直接流式返回，支持 Range/ETag；服务端不缓存图片字节。
 
 ## 小内存设计
@@ -202,7 +207,7 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
 - 图片只请求 URL 模式，响应体 64 KB 块流式写盘，超过 32 MB 中止；不整块读入内存。
 - 参考图优先用 Agnes 原始 URL，避免 base64 膨胀；只有 URL 不可达才读本地文件。
 - 角色会话逐页运行，结束即 `dispose()`；不把图片放进会话上下文。
-- Web 不做缩略图、不缓存图片；CBZ 逐文件流式打包。
+- Web 压缩图按需生成并缓存到 `.web/`，一张一张处理；ZIP/CBZ 逐文件流式打包。
 - 日志按 2 MB 轮转，流式预览只保留末尾 160 字符。
 
 ## 配置
@@ -227,10 +232,10 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
 ## 测试
 
 ```bash
-node --experimental-strip-types --test tests/*.test.ts   # 37 个用例
+node --experimental-strip-types --test tests/*.test.ts   # 41 个用例
 ```
 
-测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering 校验、黑白画风颜色锁与灰度兜底、Agnes 重试与流式下载上限、Web 只读方法白名单/默认 0.0.0.0/SSE/Range/中文路径/人设图、CBZ、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过。
+测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering 校验、黑白画风颜色锁与灰度兜底、Agnes 重试与流式下载上限、图片压缩到 <500 KB、Web 只读方法白名单/默认 0.0.0.0/SSE/Range/中文路径/人设图、ZIP/CBZ 导出、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过。
 
 ## 已知限制
 

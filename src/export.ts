@@ -69,23 +69,32 @@ function centralHeader(entry: ZipEntry): Buffer {
 	return Buffer.concat([header, name]);
 }
 
-export interface CbzResult {
+export type ImageArchiveFormat = "zip" | "cbz";
+
+export interface ImageArchiveResult {
 	file: string;
 	entries: number;
 	bytes: number;
+	format: ImageArchiveFormat;
 }
 
+/** Backwards-compatible alias. */
+export type CbzResult = ImageArchiveResult;
+
 /**
- * Build a store-only CBZ by streaming files one at a time. No archive buffer
- * and no image buffer ever exists; each file is read twice (CRC + copy).
+ * Build a store-only ZIP (`.zip`) or CBZ (`.cbz`) containing only page/panel
+ * images. Files are streamed one at a time: no archive buffer and no image
+ * buffer ever exists; each file is read twice (CRC + copy).
  */
-export async function exportCbz(options: {
+export async function exportImages(options: {
 	store: ProjectStore;
 	outPath?: string;
 	chunkBytes?: number;
-}): Promise<CbzResult> {
+	format?: ImageArchiveFormat;
+}): Promise<ImageArchiveResult> {
 	const { store } = options;
-	const outPath = options.outPath ?? join(store.root, "exports", `${store.project.slug}.cbz`);
+	const format = options.format ?? "zip";
+	const outPath = options.outPath ?? join(store.root, "exports", `${store.project.slug}.${format}`);
 	const chunkBytes = options.chunkBytes ?? 1024 * 1024;
 	ensureDir(join(store.root, "exports"));
 
@@ -142,9 +151,29 @@ export async function exportCbz(options: {
 		});
 	}
 	if (!existsSync(outPath)) throw new Error("导出失败：文件未生成");
-	return { file: outPath, entries: entries.length, bytes: offset };
+	return { file: outPath, entries: entries.length, bytes: offset, format };
+}
+
+export async function exportCbz(options: {
+	store: ProjectStore;
+	outPath?: string;
+	chunkBytes?: number;
+}): Promise<ImageArchiveResult> {
+	return exportImages({ ...options, format: "cbz" });
+}
+
+export async function exportZip(options: {
+	store: ProjectStore;
+	outPath?: string;
+	chunkBytes?: number;
+}): Promise<ImageArchiveResult> {
+	return exportImages({ ...options, format: "zip" });
+}
+
+export function archiveFileName(slug: string, format: ImageArchiveFormat = "zip"): string {
+	return `${basename(slug)}.${format}`;
 }
 
 export function cbzFileName(slug: string): string {
-	return `${basename(slug)}.cbz`;
+	return archiveFileName(slug, "cbz");
 }

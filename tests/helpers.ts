@@ -59,19 +59,7 @@ export function reloadStore(store: Store): Store {
 	return ProjectStore.loadByPath(store.root);
 }
 
-/** Minimal valid PNG (RGB, no interlace). */
-export function tinyPng(width = 8, height = 8): Buffer {
-	const raw = Buffer.alloc((width * 3 + 1) * height);
-	for (let y = 0; y < height; y++) {
-		const row = y * (width * 3 + 1);
-		raw[row] = 0;
-		for (let x = 0; x < width; x++) {
-			const off = row + 1 + x * 3;
-			raw[off] = 40 + x * 3;
-			raw[off + 1] = 60 + y * 3;
-			raw[off + 2] = 90;
-		}
-	}
+function encodeRgbPng(raw: Buffer, width: number, height: number): Buffer {
 	const chunk = (type: string, data: Buffer): Buffer => {
 		const length = Buffer.alloc(4);
 		length.writeUInt32BE(data.length, 0);
@@ -89,9 +77,51 @@ export function tinyPng(width = 8, height = 8): Buffer {
 	return Buffer.concat([signature, chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
 }
 
+/** Minimal valid PNG (RGB, no interlace). */
+export function tinyPng(width = 8, height = 8): Buffer {
+	const raw = Buffer.alloc((width * 3 + 1) * height);
+	for (let y = 0; y < height; y++) {
+		const row = y * (width * 3 + 1);
+		raw[row] = 0;
+		for (let x = 0; x < width; x++) {
+			const off = row + 1 + x * 3;
+			raw[off] = 40 + x * 3;
+			raw[off + 1] = 60 + y * 3;
+			raw[off + 2] = 90;
+		}
+	}
+	return encodeRgbPng(raw, width, height);
+}
+
+/** Larger, noisy PNG used to exercise <500 KB preview compression. */
+export function noisyPng(width = 800, height = 1000, seed = 123456789): Buffer {
+	const raw = Buffer.alloc((width * 3 + 1) * height);
+	let state = seed >>> 0;
+	const next = () => {
+		state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+		return (state >>> 24) & 0xff;
+	};
+	for (let y = 0; y < height; y++) {
+		const row = y * (width * 3 + 1);
+		raw[row] = 0;
+		for (let x = 0; x < width; x++) {
+			const off = row + 1 + x * 3;
+			raw[off] = next();
+			raw[off + 1] = next();
+			raw[off + 2] = next();
+		}
+	}
+	return encodeRgbPng(raw, width, height);
+}
+
 export function writeTinyPng(path: string, width = 8, height = 8): void {
 	mkdirSync(dirname(path), { recursive: true });
 	writeFileSync(path, tinyPng(width, height));
+}
+
+export function writeNoisyPng(path: string, width = 800, height = 1000): void {
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, noisyPng(width, height));
 }
 
 export interface FakeUiState {

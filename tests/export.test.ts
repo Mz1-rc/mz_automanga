@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { exportCbz } from "../src/export.ts";
+import { exportCbz, exportImages } from "../src/export.ts";
 import { makeTestProject, writeTinyPng } from "./helpers.ts";
 
 test("exportCbz writes a store-only zip with page/panel entries", async () => {
@@ -26,6 +26,8 @@ test("exportCbz writes a store-only zip with page/panel entries", async () => {
 	}
 	const result = await exportCbz({ store, chunkBytes: 1024 });
 	assert.equal(result.entries, 3);
+	assert.match(result.file, /\.cbz$/);
+	assert.equal(result.format, "cbz");
 	const data = readFileSync(result.file);
 	assert.equal(data.subarray(0, 4).toString("binary"), "PK\u0003\u0004");
 	for (let n = 1; n <= 3; n++) {
@@ -33,6 +35,34 @@ test("exportCbz writes a store-only zip with page/panel entries", async () => {
 		assert.ok(data.includes(Buffer.from(name, "utf8")));
 	}
 	assert.equal(data.subarray(data.length - 22, data.length - 18).toString("binary"), "PK\u0005\u0006");
+});
+
+test("exportImages defaults to a normal image-only zip", async () => {
+	const { store } = makeTestProject();
+	store.writePage({
+		schemaVersion: 1,
+		id: "page-001",
+		index: 1,
+		summary: "s",
+		panels: [
+			{
+				id: "panel-01",
+				shot: "wide",
+				characters: [],
+				action: "a",
+				dialogue: [],
+				image: { status: "done" as const, file: "pages/page-001/panel-01.png" },
+			},
+		],
+	});
+	writeTinyPng(join(store.root, "pages", "page-001", "panel-01.png"));
+	const result = await exportImages({ store, chunkBytes: 1024 });
+	assert.equal(result.format, "zip");
+	assert.match(result.file, /\.zip$/);
+	assert.equal(result.entries, 1);
+	const data = readFileSync(result.file);
+	assert.equal(data.subarray(0, 4).toString("binary"), "PK\u0003\u0004");
+	assert.ok(data.includes(Buffer.from("page-001/panel-01.png", "utf8")));
 });
 
 test("exportCbz refuses to export an empty project", async () => {
