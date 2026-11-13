@@ -7,7 +7,7 @@
   "pi": {
     "extensions": ["./extensions/mz-automanga.ts"]
   },
-  "files": ["extensions", "src", "prompts", "README.md", "design.md"],
+  "files": ["extensions", "src", "prompts", "README.md", "doc"],
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",

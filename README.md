@@ -1,6 +1,8 @@
 # mz_automanga
 
-pi 插件：根据剧本自动创作漫画。流程由代码严格线性编排，创作由一组专职子 agent 完成；图像使用 [Agnes Image 2.5 Flash](https://www.agnes-ai.com/zh-Hans/docs/agnes-image-25-flash) 生成，**文字与气泡直接画进图片**。内置只读 Web 预览：漫画画面、角色人设图与单页阅读，不提供写操作。
+pi 插件：根据剧本自动创作漫画。流程由代码严格线性编排，创作由一组专职子 agent 完成；默认使用 [Agnes Image 2.5 Flash](https://www.agnes-ai.com/zh-Hans/docs/agnes-image-25-flash) 生成图片（可通过 `ImageProvider` 替换模型），**文字与气泡直接画进图片**。内置只读 Web 预览：漫画画面、角色人设图与单页阅读，不提供写操作。
+
+详细设计文档见 [`doc/README.md`](doc/README.md)。
 
 ## 安装
 
@@ -53,7 +55,7 @@ cp -R /root/mz_automanga/extensions /root/mz_automanga/src /root/mz_automanga/pr
 
 注意：**不要把 `package.json` 复制成 `<项目>/.pi/package.json`**；它会覆盖/干扰该目录的自动发现（实测会导致扩展不加载）。平铺方案不需要 `package.json`。
 
-必需文件只有：`extensions/mz-automanga.ts`、`src/**`、`prompts/**`。不需要复制 `tests/`、`design.md`、`README.md`、`.git`、`node_modules`（宿主提供 peer 依赖）。
+必需文件只有：`extensions/mz-automanga.ts`、`src/**`、`prompts/**`。不需要复制 `tests/`、`doc/`、`README.md`、`.git`、`node_modules`（宿主提供 peer 依赖）。
 
 项目本地扩展需要项目信任：首次在 TUI 中确认，或用 `pi -a`。Agnes Key 不随插件复制，仍需 `AGNES_API_KEY` 或 `/manga key` 设置。
 
@@ -266,15 +268,30 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
 }
 ```
 
-接口说明、目录结构与完整接入示例见 [`src/imagegen/README.md`](src/imagegen/README.md)。
+接口说明、目录结构与完整接入示例见 [`src/imagegen/README.md`](src/imagegen/README.md)；设计说明见 [`doc/image-generation.md`](doc/image-generation.md)。
 
 ## 测试
 
 ```bash
-node --experimental-strip-types --test tests/*.test.ts   # 43 个用例
+node --experimental-strip-types --test tests/*.test.ts   # 45 个用例
 ```
 
-测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering/空镜校验、改编等级与提示词注入、黑白画风颜色锁与灰度兜底、Agnes 重试与流式下载上限、图片压缩到 <500 KB、Web 只读方法白名单/默认 0.0.0.0/SSE/Range/中文路径/人设图、ZIP/CBZ 导出、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过。
+测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering/空镜校验、改编等级与提示词注入、黑白画风颜色锁与灰度兜底、Agnes 重试与流式下载上限、图片压缩到 <500 KB、Web 只读方法白名单/默认 0.0.0.0/SSE/Range/中文路径/人设图、ZIP/CBZ 导出、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过、图像模块 provider/workspace 解耦。
+
+## 文档
+
+- [`doc/README.md`](doc/README.md)：文档索引、章节编号对照与阅读顺序。
+- [`doc/architecture.md`](doc/architecture.md)：架构、关键决策、目录、角色/阶段/闸门。
+- [`doc/data-model.md`](doc/data-model.md)：运行时 JSON 数据模型。
+- [`doc/pipeline.md`](doc/pipeline.md)：嵌套会话运行器与提示词组装。
+- [`doc/image-generation.md`](doc/image-generation.md)：图像生成与模型提供方抽象。
+- [`doc/web-preview.md`](doc/web-preview.md)：只读 Web 预览。
+- [`doc/commands.md`](doc/commands.md)：命令、工具与后台任务。
+- [`doc/configuration.md`](doc/configuration.md)：配置、API Key、画风与默认值。
+- [`doc/operations.md`](doc/operations.md)：幂等、恢复、成本、低内存与安全。
+- [`doc/development.md`](doc/development.md)：测试、实施计划与风险。
+- [`doc/appendices.md`](doc/appendices.md)：提示词骨架、请求示例、API 对应。
+- [`doc/history.md`](doc/history.md)：设计版本演进。
 
 ## 已知限制
 
