@@ -1,11 +1,12 @@
 import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DEFAULT_IMAGE, normalizeImageConfig } from "./imagegen/config.ts";
+import { LOCKED_TOKENS, STYLE_PRESETS } from "./imagegen/style.ts";
 import { ensureDir, readJson } from "./paths.ts";
 import type {
 	AgentConfig,
 	GateId,
 	GatePolicy,
-	ImageConfig,
 	MangaConfig,
 	MangaProject,
 	MemoryConfig,
@@ -16,71 +17,20 @@ import type {
 } from "./types.ts";
 import { ROLE_IDS } from "./types.ts";
 
-export const LOCKED_TOKENS = [
-	"no watermark",
-	"no signature",
-	"no text other than the specified lettering",
-];
-
-export const STYLE_PRESETS: Record<Exclude<StylePreset, "custom">, { label: string; ratio: StyleSelection["ratio"]; prompt: string }> = {
-	"manga-bw": {
-		label: "黑白漫画",
-		ratio: "3:4",
-		prompt:
-			"modern seinen manga drawn strictly in black and white, pure monochrome ink lineart, screentone dot shading, high contrast, no color at all, no colored lighting, cinematic composition",
-	},
-	"manhua-color": {
-		label: "全彩国漫",
-		ratio: "3:4",
-		prompt:
-			"Chinese manhua, full color, cel shading, crisp outlines, vibrant but controlled palette",
-	},
-	webtoon: {
-		label: "竖屏条漫",
-		ratio: "9:16",
-		prompt:
-			"Korean webtoon style, full color, soft gradients, vertical composition, generous negative space",
-	},
-};
-
-export const LETTERING_STYLE =
-	"clean black comic lettering, rounded white speech bubbles with thin black outlines";
-
-/**
- * Explicit color lock for monochrome presets. Image models often read
- * "seinen manga" as a color style, so every request repeats the color policy.
- */
-export const MONOCHROME_LOCK =
-	"COLOR LOCK: strict black-and-white monochrome artwork only — every surface, skin, hair, clothing, background and light is rendered in black, white and grey screentone; absolutely no color, no colored accents, no sepia, no blue or orange tint";
-
-const MONOCHROME_NEGATIVE = [
-	"color",
-	"full color",
-	"colored",
-	"chromatic colors",
-	"saturated colors",
-	"colored lighting",
-	"sepia",
-	"blue tint",
-	"orange tint",
-];
-
-export function isMonochromeStyle(style: StyleSelection): boolean {
-	return style.preset === "manga-bw";
-}
-
-export const DEFAULT_IMAGE: ImageConfig = {
-	model: "agnes-image-2.5-flash",
-	draftSize: "1K",
-	finalSize: "2K",
-	maxRefs: 4,
-	usePreviousPanel: true,
-	keepVersions: 2,
-	timeoutMs: 240000,
-	retries: 3,
-	maxDownloadBytes: 32 * 1024 * 1024,
-	streamChunkBytes: 64 * 1024,
-};
+// Style constants and enforcement live in the image module; re-exported here
+// so existing imports (`composeStylePrompt`, `makeStyle`, …) keep working.
+export {
+	LETTERING_STYLE,
+	LOCKED_TOKENS,
+	MONOCHROME_LOCK,
+	STYLE_PRESETS,
+	composeStylePrompt,
+	enforceStyleNegative,
+	enforceStylePrompt,
+	isMonochromeStyle,
+	styleBasePrompt,
+} from "./imagegen/style.ts";
+export { DEFAULT_IMAGE } from "./imagegen/config.ts";
 
 export const DEFAULT_AGENTS: AgentConfig = {
 	thinkingLevel: "medium",
@@ -164,12 +114,7 @@ function clamp(value: unknown, fallback: number, min: number, max: number): numb
 }
 
 export function normalizeConfig(config: MangaConfig): MangaConfig {
-	config.image.maxRefs = clamp(config.image.maxRefs, 4, 0, 8);
-	config.image.keepVersions = clamp(config.image.keepVersions, 2, 0, 10);
-	config.image.timeoutMs = clamp(config.image.timeoutMs, 240000, 60000, 360000);
-	config.image.retries = clamp(config.image.retries, 3, 0, 6);
-	config.image.maxDownloadBytes = clamp(config.image.maxDownloadBytes, 32 * 1024 * 1024, 1024 * 1024, 128 * 1024 * 1024);
-	config.image.streamChunkBytes = clamp(config.image.streamChunkBytes, 64 * 1024, 16 * 1024, 1024 * 1024);
+	normalizeImageConfig(config.image);
 	config.agents.timeoutMs = clamp(config.agents.timeoutMs, 600000, 60000, 30 * 60 * 1000);
 	config.agents.maxAttempts = clamp(config.agents.maxAttempts, 2, 1, 4);
 	config.memory.logRotateBytes = clamp(config.memory.logRotateBytes, 2 * 1024 * 1024, 256 * 1024, 32 * 1024 * 1024);
@@ -247,62 +192,6 @@ export function makeStyle(preset: StylePreset, customPrompt?: string | null, rat
 		ratio: ratio ?? def.ratio,
 		lockedTokens: [...LOCKED_TOKENS],
 	};
-}
-
-export function styleBasePrompt(style: StyleSelection): string {
-	const base = style.preset === "custom" ? (style.customPrompt ?? "").trim() : STYLE_PRESETS[style.preset].prompt;
-	return base;
-}
-
-/**
- * The style block appended verbatim to every image prompt. Agents must copy it
- * without edits; validators check that the locked tokens are present.
- */
-export function composeStylePrompt(style: StyleSelection): string {
-	return [
-		styleBasePrompt(style),
-		isMonochromeStyle(style) ? MONOCHROME_LOCK : undefined,
-		LETTERING_STYLE,
-		`${style.lockedTokens.join(", ")}`,
-	]
-		.filter(Boolean)
-		.join(", ");
-}
-
-/**
- * Code-level style enforcement. Agents are supposed to copy the style block,
- * but a missing or stale block must never silently produce a color image for a
- * black-and-white project. This appends the color lock and full style block
- * only when they are absent, so prompts sent to Agnes always carry them.
- */
-export function enforceStylePrompt(prompt: string, style: StyleSelection): string {
-	const core = prompt.trim();
-	if (!isMonochromeStyle(style)) return core;
-	const lower = core.toLowerCase();
-	const additions: string[] = [];
-	if (!/black[\s-]*and[\s-]*white|monochrome|greyscale|grayscale/.test(lower)) {
-		additions.push("RENDER IN STRICT BLACK AND WHITE (monochrome ink, grey screentone, no color)");
-	}
-	if (!lower.includes("no color")) {
-		additions.push("convert every reference-sheet color to grey tone; no color anywhere in the image");
-	}
-	const styleBlock = composeStylePrompt(style);
-	if (!lower.includes(styleBasePrompt(style).toLowerCase()) || !lower.includes("no text other than the specified lettering")) {
-		additions.push(styleBlock);
-	}
-	if (additions.length === 0) return core;
-	const separator = /[.!?。！？]$/.test(core) ? " " : ". ";
-	return `${core}${separator}${additions.join(". ")}`;
-}
-
-/** Merge monochrome anti-color terms into the negative prompt. */
-export function enforceStyleNegative(negative: string | undefined, style: StyleSelection): string | undefined {
-	const core = (negative ?? "").trim();
-	if (!isMonochromeStyle(style)) return core || undefined;
-	const existing = new Set(core.toLowerCase().split(",").map((item) => item.trim()).filter(Boolean));
-	const additions = MONOCHROME_NEGATIVE.filter((term) => !existing.has(term));
-	const merged = [core, ...additions].filter(Boolean).join(", ");
-	return merged || undefined;
 }
 
 export function projectConfig(cwd: string, project: MangaProject, global: MangaConfig): MangaConfig {

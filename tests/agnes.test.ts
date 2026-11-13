@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AgnesClient, AgnesError } from "../src/agnes.ts";
+import { AgnesClient, AgnesError } from "../src/imagegen/index.ts";
 import { readImageSize } from "../src/util/png.ts";
 import { downloadToFile } from "../src/util/stream.ts";
 import { tinyPng } from "./helpers.ts";

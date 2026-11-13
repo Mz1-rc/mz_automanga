@@ -1,10 +1,10 @@
 import { join } from "node:path";
 import { existsSync } from "node:fs";
-import { AgnesClient, AgnesError } from "./agnes.ts";
+import { ImageGenError, generateCharacterImages, generatePanelImages, regeneratePanel, type ImageProvider } from "./imagegen/index.ts";
+import { createProjectImageWorkspace, createProviderFromConfig } from "./imagegen-adapter.ts";
 import { validatePage, validateRefImages, validateRoleOutputs, roleTargets } from "./artifacts.ts";
 import { composeStylePrompt, type MangaConfig } from "./config.ts";
 import { resolveAgnesKey } from "./keys.ts";
-import { generateCharacterImages, generatePanelImages, regeneratePanel } from "./images.ts";
 import { readJson, readText, resolveWithin, writeAtomic, writeJsonAtomic, ensureDir, fileExists, nowIso } from "./paths.ts";
 import { ensureProjectWebPreviews } from "./previews.ts";
 import { buildSystemPrompt, buildTaskPrompt } from "./prompts.ts";
@@ -43,7 +43,7 @@ export interface PipelineOptions {
 	ui: PipelineUi;
 	agentDir: string;
 	runner?: RoleRunner;
-	client?: AgnesClient;
+	client?: ImageProvider;
 	signal?: AbortSignal;
 	/** Resolve a configured model id, or return the host session model. */
 	resolveModel?: (modelId?: string) => unknown;
@@ -83,7 +83,7 @@ export class MangaPipeline {
 	readonly signal?: AbortSignal;
 	private readonly runner: RoleRunner;
 	private readonly modelResolver?: (modelId?: string) => unknown;
-	private client?: AgnesClient;
+	private client?: ImageProvider;
 	private lastReport = 0;
 	private activeUsage = emptyUsage();
 	private runStage?: string;
@@ -383,9 +383,9 @@ export class MangaPipeline {
 			try {
 				const client = this.getClient();
 				const result = await generateCharacterImages({
-					store: this.store,
-					config: this.config,
-					client,
+					workspace: createProjectImageWorkspace(this.store),
+					config: this.config.image,
+					provider: client,
 					signal: this.signal,
 					force,
 					onlyId,
@@ -537,9 +537,9 @@ export class MangaPipeline {
 			const run = this.store.beginRun("code", "image_gen", { note: "分镜出图" });
 			try {
 				const result = await generatePanelImages({
-					store: this.store,
-					config: this.config,
-					client: this.getClient(),
+					workspace: createProjectImageWorkspace(this.store),
+					config: this.config.image,
+					provider: this.getClient(),
 					signal: this.signal,
 					force,
 					onProgress: (progress) => {
@@ -692,14 +692,14 @@ export class MangaPipeline {
 				this.report(`重画 ${key}`);
 				try {
 					await regeneratePanel({
-						store: this.store,
-						config: this.config,
-						client: this.getClient(),
+						workspace: createProjectImageWorkspace(this.store),
+						config: this.config.image,
+						provider: this.getClient(),
 						key,
 						signal: this.signal,
 					});
 				} catch (error) {
-					if (error instanceof AgnesError && error.code === "auth") throw error;
+					if (error instanceof ImageGenError && error.code === "auth") throw error;
 					this.ui.notify(`重画 ${key} 失败：${messageOf(error)}`, "warning");
 				}
 			}
@@ -713,9 +713,9 @@ export class MangaPipeline {
 		this.report(key);
 		await this.locked("code", async () => {
 			const result = await regeneratePanel({
-				store: this.store,
-				config: this.config,
-				client: this.getClient(),
+				workspace: createProjectImageWorkspace(this.store),
+				config: this.config.image,
+				provider: this.getClient(),
 				key,
 				note,
 				final,
@@ -1052,7 +1052,7 @@ export class MangaPipeline {
 		return this.config.agents.overrides[role]?.thinkingLevel ?? this.config.agents.thinkingLevel;
 	}
 
-	private getClient(): AgnesClient {
+	private getClient(): ImageProvider {
 		if (this.client) return this.client;
 		const resolved = resolveAgnesKey(this.config, this.agentDir);
 		if (!resolved) {
@@ -1060,15 +1060,7 @@ export class MangaPipeline {
 				`未找到 Agnes API Key。请设置环境变量 ${this.config.agnes.apiKeyEnv}，或运行 /manga key 保存。`,
 			);
 		}
-		this.client = new AgnesClient({
-			baseUrl: this.config.agnes.baseUrl,
-			apiKey: resolved.key,
-			model: this.config.image.model || this.config.agnes.model,
-			timeoutMs: this.config.image.timeoutMs,
-			retries: this.config.image.retries,
-			maxDownloadBytes: this.config.image.maxDownloadBytes,
-			streamChunkBytes: this.config.image.streamChunkBytes,
-		});
+		this.client = createProviderFromConfig(this.config, resolved.key);
 		return this.client;
 	}
 }

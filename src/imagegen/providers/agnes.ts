@@ -1,42 +1,26 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";import { tmpdir } from "node:os";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, extname, join } from "node:path";
-import { ensureDir, truncateMiddle } from "./paths.ts";
-import { readImageSize, isJpeg, isPng, type ImageSize } from "./util/png.ts";
-import { downloadToFile, readHead, writeBase64ToFile } from "./util/stream.ts";
+import { ensureDir, truncateMiddle } from "../../paths.ts";
+import { readImageSize, isJpeg, isPng } from "../../util/png.ts";
+import { downloadToFile, readHead, writeBase64ToFile } from "../../util/stream.ts";
+import { ImageGenError } from "../errors.ts";
+import type {
+	ImageGenerateRequest,
+	ImageGenerateResult,
+	ImageProvider,
+	ImageProviderConfig,
+	ImageProviderTestResult,
+	ImageRatio,
+	ImageReference,
+	ImageSizeTier,
+} from "../types.ts";
 
-export type ImageSizeTier = "1K" | "2K" | "3K" | "4K";
-export type ImageRatio = "1:1" | "3:4" | "2:3" | "4:3" | "16:9" | "9:16";
-
-export interface AgnesReference {
-	/** Public URL from a previous Agnes response. Preferred: no local read. */
-	url?: string;
-	/** Project-relative or absolute local path. Converted to a data URI only if no URL. */
-	path?: string;
-}
-
-export interface AgnesGenerateOptions {
-	prompt: string;
-	negative?: string;
-	size: ImageSizeTier;
-	ratio?: ImageRatio;
-	refs?: AgnesReference[];
-	outPath: string;
-	signal?: AbortSignal;
-	/** project root used to resolve local refs */
-	projectRoot?: string;
-}
-
-export interface AgnesGenerateResult {
-	file: string;
-	sourceUrl?: string;
-	width: number;
-	height: number;
-	bytes: number;
-	attempts: number;
-	size: ImageSizeTier;
-	ratio?: ImageRatio;
-	format: "png" | "jpeg" | "unknown";
-}
+// Backwards-compatible aliases for callers that used the old `src/agnes.ts`.
+export type { ImageRatio, ImageSizeTier };
+export type AgnesReference = ImageReference;
+export type AgnesGenerateOptions = ImageGenerateRequest;
+export type AgnesGenerateResult = ImageGenerateResult;
 
 export interface AgnesClientOptions {
 	baseUrl: string;
@@ -49,17 +33,10 @@ export interface AgnesClientOptions {
 	fetchImpl?: typeof fetch;
 }
 
-export class AgnesError extends Error {
-	readonly code: string;
-	readonly status?: number;
-	readonly detail?: string;
-
+export class AgnesError extends ImageGenError {
 	constructor(code: string, message: string, options: { status?: number; detail?: string } = {}) {
-		super(message);
+		super(code, message, options);
 		this.name = "AgnesError";
-		this.code = code;
-		this.status = options.status;
-		this.detail = options.detail;
 	}
 }
 
@@ -131,13 +108,18 @@ function joinPrompt(prompt: string, negative?: string): string {
 	return `${core}\n\nAvoid: ${neg}`;
 }
 
-export class AgnesClient {
+export class AgnesClient implements ImageProvider {
+	readonly id = "agnes";
 	private readonly opts: AgnesClientOptions;
 	private readonly fetchImpl: typeof fetch;
 
 	constructor(options: AgnesClientOptions) {
 		this.opts = options;
 		this.fetchImpl = options.fetchImpl ?? fetch;
+	}
+
+	get model(): string {
+		return this.opts.model;
 	}
 
 	private endpoint(): string {
@@ -345,7 +327,7 @@ export class AgnesClient {
 	}
 
 	/** Generate a tiny 1K image to validate the key. Returns the size. */
-	async testKey(signal?: AbortSignal): Promise<ImageSize & { file: string }> {
+	async testKey(signal?: AbortSignal): Promise<ImageProviderTestResult> {
 		const dir = mkdtempSync(join(tmpdir(), "mz-automanga-key-"));
 		const file = join(dir, "test.png");
 		try {
@@ -373,4 +355,27 @@ async function safeText(response: Response): Promise<string> {
 	} catch {
 		return "";
 	}
+}
+
+const AGNES_DEFAULTS = {
+	baseUrl: "https://apihub.agnes-ai.com/v1",
+	model: "agnes-image-2.5-flash",
+	timeoutMs: 240000,
+	retries: 3,
+	maxDownloadBytes: 32 * 1024 * 1024,
+	streamChunkBytes: 64 * 1024,
+};
+
+/** Factory used by the provider registry. */
+export function createAgnesProvider(config: ImageProviderConfig): ImageProvider {
+	return new AgnesClient({
+		baseUrl: config.baseUrl ?? AGNES_DEFAULTS.baseUrl,
+		apiKey: config.apiKey,
+		model: config.model || AGNES_DEFAULTS.model,
+		timeoutMs: config.timeoutMs ?? AGNES_DEFAULTS.timeoutMs,
+		retries: config.retries ?? AGNES_DEFAULTS.retries,
+		maxDownloadBytes: config.maxDownloadBytes ?? AGNES_DEFAULTS.maxDownloadBytes,
+		streamChunkBytes: config.streamChunkBytes ?? AGNES_DEFAULTS.streamChunkBytes,
+		fetchImpl: config.fetchImpl,
+	});
 }

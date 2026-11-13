@@ -91,6 +91,10 @@ export interface StyleSelection {
 }
 
 export interface ImageConfig {
+	/** Registered provider id, e.g. "agnes". */
+	provider: string;
+	/** Provider-specific options (baseUrl, extra flags, …). */
+	providerOptions?: Record<string, unknown>;
 	model: string;
 	draftSize: "1K" | "2K" | "3K" | "4K";
 	finalSize: "1K" | "2K" | "3K" | "4K";

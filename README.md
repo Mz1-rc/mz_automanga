@@ -53,7 +53,7 @@ cp -R /root/mz_automanga/extensions /root/mz_automanga/src /root/mz_automanga/pr
 
 注意：**不要把 `package.json` 复制成 `<项目>/.pi/package.json`**；它会覆盖/干扰该目录的自动发现（实测会导致扩展不加载）。平铺方案不需要 `package.json`。
 
-必需文件只有：`extensions/mz-automanga.ts`、`src/**`、`prompts/**`。不需要复制 `tests/`、`design.md`、`README.md`、`CHANGELOG.md`、`.git`、`node_modules`（宿主提供 peer 依赖）。
+必需文件只有：`extensions/mz-automanga.ts`、`src/**`、`prompts/**`。不需要复制 `tests/`、`design.md`、`README.md`、`.git`、`node_modules`（宿主提供 peer 依赖）。
 
 项目本地扩展需要项目信任：首次在 TUI 中确认，或用 `pi -a`。Agnes Key 不随插件复制，仍需 `AGNES_API_KEY` 或 `/manga key` 设置。
 
@@ -246,6 +246,27 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
 ```
 
 闸门策略：`auto`（script 仅在有 blocker/major 时问）、`always`、`off`。
+
+## 扩展图像模型
+
+出图代码集中在 `src/imagegen/`，主程序只依赖两个契约：
+
+- `ImageProvider`：单个图像模型的 `generate()` / `test()`；
+- `ImageGenWorkspace`：存储与后处理端口（页面读写、版本、sourceUrl、灰度、Web 预览）。
+
+内置 Agnes；配置 `image.provider` 可切换，接入新模型只需实现 `ImageProvider` 并注册工厂：
+
+```json
+{
+  "image": {
+    "provider": "my-model",
+    "providerOptions": { "baseUrl": "https://api.example.com" },
+    "model": "my-model-v1"
+  }
+}
+```
+
+接口说明、目录结构与完整接入示例见 [`src/imagegen/README.md`](src/imagegen/README.md)。
 
 ## 测试
 

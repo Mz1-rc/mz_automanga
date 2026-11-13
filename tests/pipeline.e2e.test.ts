@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { AgnesClient } from "../src/agnes.ts";
-import { generatePanelImages } from "../src/images.ts";
+import { AgnesClient, generatePanelImages } from "../src/imagegen/index.ts";
+import { createProjectImageWorkspace } from "../src/imagegen-adapter.ts";
 import { MangaPipeline, type RoleRunner } from "../src/pipeline.ts";
 import { composeStylePrompt } from "../src/config.ts";
 import { fakeUi, makeTestProject, testConfig, tinyPng } from "./helpers.ts";
@@ -234,9 +234,9 @@ test("pipeline runs end-to-end with a fake runner and mock Agnes, then skips cac
 		assert.equal(reloaded.project.adaptation, "balanced", "non-interactive runs fall back to balanced");
 
 		const second = await generatePanelImages({
-			store: reloaded,
-			config,
-			client,
+			workspace: createProjectImageWorkspace(reloaded),
+			config: config.image,
+			provider: client,
 			force: false,
 		});
 		assert.equal(second.done, 0);

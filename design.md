@@ -351,7 +351,6 @@ mz_automanga/
 ├── package.json
 ├── design.md
 ├── README.md
-├── CHANGELOG.md
 ├── extensions/
 │   └── mz-automanga.ts          # 入口：注册命令/工具/事件
 ├── src/
@@ -364,7 +363,6 @@ mz_automanga/
 │   ├── state.ts                 # ProjectStore：state.json、阶段迁移、闸门、runs、锁
 │   ├── artifacts.ts             # ArtifactManager + validateRoleOutputs
 │   ├── artifact-tool.ts         # save_artifact 工具
-│   ├── roles.ts                 # 角色表、阶段映射、输出目标、闸门映射
 │   ├── prompts.ts               # 系统/任务提示词组装
 │   ├── runner.ts                # 嵌套 AgentSession 运行器
 │   ├── pipeline.ts              # 线性状态机、闸门流程、修复循环
@@ -372,9 +370,18 @@ mz_automanga/
 │   ├── commands.ts              # /manga 命令
 │   ├── tools.ts                 # manga_team 工具
 │   ├── ui.ts                    # 状态栏、widget、通知
-│   ├── agnes.ts                 # 图像客户端（调用、重试、下载、校验）
-│   ├── images.ts                # 图像阶段（角色立绘 + 分镜格）
-│   ├── schemas.ts               # TypeBox schema + 中文校验信息
+│   ├── imagegen/                # 出图模块（与主程序解耦，见 src/imagegen/README.md）
+│   │   ├── index.ts             # 公开入口
+│   │   ├── types.ts             # ImageProvider / ImageGenWorkspace / 请求结果
+│   │   ├── errors.ts            # ImageGenError
+│   │   ├── style.ts             # 画风预设与颜色锁
+│   │   ├── config.ts            # 图像默认值与归一化
+│   │   ├── references.ts        # 参考图 / cacheKey / panel 路径
+│   │   ├── stages.ts            # 角色立绘 + 逐格出图 + 单格重画
+│   │   ├── provider.ts          # ImageProviderRegistry
+│   │   ├── providers/agnes.ts   # Agnes 实现
+│   │   └── README.md            # 接口与接入新模型说明
+│   ├── imagegen-adapter.ts      # 唯一桥接：ProjectStore → ImageGenWorkspace
 │   ├── web/
 │   │   ├── server.ts            # HTTP、SSE、只读方法白名单、路径防护
 │   │   └── public/
@@ -382,8 +389,11 @@ mz_automanga/
 │   │       ├── app.js
 │   │       └── style.css
 │   ├── export.ts                # CBZ（内置无依赖 store-only zip）
+│   ├── previews.ts              # Web 预览图生成与缓存
 │   ├── util/stream.ts           # 流式下载/写入/CRC32（低内存）
-│   └── util/png.ts              # 读取 PNG/JPEG 尺寸
+│   ├── util/png.ts              # 读取 PNG/JPEG 尺寸
+│   ├── util/png-grayscale.ts    # 黑白画风确定性灰度化
+│   └── util/image-compress.ts   # Web 预览图压缩
 ├── prompts/
 │   ├── _common.md               # 所有角色共享的创作宪法
 │   ├── script_analyst.md
@@ -394,11 +404,15 @@ mz_automanga/
 │   ├── editor.md
 │   └── repairer.md
 ├── tests/
-│   ├── mock-agnes.ts
+│   ├── helpers.ts
 │   ├── state.test.ts
 │   ├── artifacts.test.ts
-│   ├── gates.test.ts            # 剧本问题 → 决策（纯函数部分）
+│   ├── init-dir.test.ts
+│   ├── script-input.test.ts
+│   ├── style.test.ts
 │   ├── agnes.test.ts
+│   ├── imagegen.test.ts         # 假 provider + 内存 workspace（零网络）
+│   ├── compress.test.ts
 │   ├── web.test.ts
 │   ├── export.test.ts
 │   └── pipeline.e2e.test.ts
@@ -1187,8 +1201,8 @@ export async function runRole(options: RoleRunOptions): Promise<RoleRunResult> {
 `manga-bw` 的颜色约束分三层：
 
 1. 画风串包含 `black and white / monochrome / no color` 与 `COLOR LOCK`；
-2. `images.ts` 在每次请求前调用 `enforceStylePrompt` / `enforceStyleNegative`，即使旧提示词里没有颜色锁也会补齐，并把 color/sepia/彩色光等加入 negative；
-3. 下载完成后调用 `toMonochromePng`，把 8-bit RGB/RGBA PNG 确定性地转为灰度（保留 alpha 与尺寸；不处理 JPEG、调色板、16-bit、隔行或超大图）。这一步保证 Web 预览与 CBZ 中不会再出现彩色画面。
+2. `src/imagegen/stages.ts` 在每次请求前调用 `enforceStylePrompt` / `enforceStyleNegative`，即使旧提示词里没有颜色锁也会补齐，并把 color/sepia/彩色光等加入 negative；
+3. 下载完成后调用 `toMonochromePng`，把 8-bit RGB/RGBA PNG 确定性地转为灰度（保留 alpha 与尺寸；不处理 JPEG、调色板、16-bit、隔行或超大图）。这一步由 `imagegen-adapter.ts` 的 `afterImageWritten()` 完成，与具体图像模型无关；切换 provider 后仍生效。
 
 - 角色立绘：1K、与画风同比例、三视图合一（正/四分之三/特写）。
 - 分镜格：默认 1K 草稿；`--final` 用 2K 重绘（同 prompt、同 refs，仅 size 变化）。
@@ -1200,7 +1214,7 @@ export async function runRole(options: RoleRunOptions): Promise<RoleRunResult> {
 
 ### 8.5 本地 mock
 
-`tests/mock-agnes.ts` 启动 `http.createServer`：
+`tests/agnes.test.ts` 与 `tests/pipeline.e2e.test.ts` 用 `http.createServer` 启动 mock：
 
 - 校验 `Authorization` 与 payload 结构；
 - 返回 `{ data: [{ url: "http://127.0.0.1:<port>/img/<n>.png" }] }`；
@@ -1208,6 +1222,24 @@ export async function runRole(options: RoleRunOptions): Promise<RoleRunResult> {
 - 可注入 429/500/超时，用于测试重试与中止。
 
 `agnes.baseUrl` 可指向 mock，e2e 零网络、零费用。
+
+### 8.6 模型提供方抽象（provider）
+
+出图代码全部在 `src/imagegen/`，主程序只通过两个契约与它交互：
+
+| 契约 | 位置 | 作用 |
+|---|---|---|
+| `ImageProvider` | `src/imagegen/types.ts` | 单个模型的 `generate()` / `test()` / `dispose()`；新模型实现此接口 |
+| `ImageGenWorkspace` | `src/imagegen/types.ts` | 存储与后处理端口（读写 page、版本、sourceUrl、灰度、Web 预览） |
+
+- 模型注册：`imageProviders.register(id, factory)`；内置 `agnes`，切换 `image.provider` 即可换模型。
+- 配置：`image.provider` + `image.providerOptions`；Agnes 仍兼容顶层 `agnes.baseUrl`。
+- 阶段函数：`generateCharacterImages()`、`generatePanelImages()`、`regeneratePanel()`，只依赖 provider 与 workspace。
+- 宿主适配：`src/imagegen-adapter.ts` 的 `createProjectImageWorkspace(store)` 与 `createProviderFromConfig(config, key)`。
+- 参考图优先传 URL，其次本地绝对路径；缓存键包含 model，换模型自动失效。
+- 黑白颜色锁与灰度兜底在 `imagegen/style.ts` + workspace 的 `afterImageWritten()`，新 provider 无需重复实现。
+
+完整接口、接入步骤与示例见 `src/imagegen/README.md`。
 
 ---
 
@@ -1391,7 +1423,7 @@ startJob(label, runner): BackgroundJob {
     "timeoutMs": 240000,
     "retries": 3
   },
-  "image": { "draftSize": "1K", "finalSize": "2K", "maxRefs": 4, "usePreviousPanel": true, "keepVersions": 3 },
+  "image": { "provider": "agnes", "providerOptions": {}, "draftSize": "1K", "finalSize": "2K", "maxRefs": 4, "usePreviousPanel": true, "keepVersions": 3 },
   "agents": { "thinkingLevel": "medium", "timeoutMs": 600000, "maxAttempts": 2, "overrides": {} },
   "gates": { "script": "auto", "cast": "always", "storyboard": "always", "final": "always" },
   "web": { "host": "0.0.0.0", "port": 45871, "open": true },  // port=0 时必须用 --port

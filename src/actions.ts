@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, readdirSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { AgnesClient } from "./agnes.ts";
 import { composeStylePrompt, makeStyle, STYLE_PRESETS, type MangaConfig } from "./config.ts";
+import { createProviderFromConfig } from "./imagegen-adapter.ts";
 import { resolveAgnesKey, maskKey, saveAgnesKey } from "./keys.ts";
 import { ensureDir, listDirs, resolveWithin, writeJsonAtomic } from "./paths.ts";
 import { MangaPipeline, gateIdForPhase, isRole, roleForPhase, roleLabel, pipelineSummary, type PipelineUi } from "./pipeline.ts";
@@ -630,16 +630,9 @@ export async function actionKey(ctx: ActionCtx, app: AppLike, options: { key?: s
 	}
 	if (!resolved) throw new Error("尚未设置 Agnes API Key。设置 AGNES_API_KEY，或运行 /manga key 输入。");
 	if (!options.test) return `已保存 API Key（${maskKey(resolved.key)}，来自 ${resolved.source === "env" ? "环境变量" : "配置文件"}）。`;
-	const client = new AgnesClient({
-		baseUrl: config.agnes.baseUrl,
-		apiKey: resolved.key,
-		model: config.image.model || config.agnes.model,
-		timeoutMs: config.image.timeoutMs,
-		retries: 0,
-		maxDownloadBytes: config.image.maxDownloadBytes,
-		streamChunkBytes: config.image.streamChunkBytes,
-	});
-	const result = await client.testKey();
+	const client = createProviderFromConfig(config, resolved.key, { retries: 0 });
+	const result = await client.test?.();
+	if (!result) throw new Error("当前图像提供方不支持 Key 测试。");
 	return `API Key 可用。测试图：${result.width}x${result.height}（${result.format}）。`;
 }
 
