@@ -1,6 +1,6 @@
 # Web 预览（只读）
 
-> 代码入口：`src/web/server.ts`、`src/web/public/`、`src/previews.ts`。
+> 代码入口：`src/web/server.ts`、`src/web/http.ts`、`src/web/snapshot.ts`、`src/web/public/`、`src/previews.ts`。
 > 包含：§9 Web 预览。
 > 返回 [文档索引](README.md)。
 
@@ -26,17 +26,17 @@
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/` | 单页应用：项目选择器 + 图片网格 + 单页阅读 |
-| GET | `/app.js`, `/style.css` | 包内静态资源 |
+| GET | `/assets/*` | 包内静态资源（`assets/js/*.js`、`assets/css/*.css`）；仅允许白名单扩展名，拒绝路径穿越与符号链接逃逸 |
 | GET | `/api/projects` | 项目列表（slug、标题、页数、完成数） |
 | GET | `/api/project?p=<slug>` | 项目摘要 + 每页图片清单（`page/panel/file/status`）+ 角色人设清单（`characters[]`） |
 | GET | `/media/<slug>/<relpath>` | 图片，支持 Range；原图 >500,000 字节时优先返回 `.web/` 中新鲜且 ≤500,000 字节的压缩副本 |
-| GET | `/api/events?p=<slug>` | SSE：`snapshot` / `panel` / `ping` |
+| GET | `/api/events?p=<slug>` | SSE：`snapshot` / `ping` |
 
 **框架层只读约束（硬边界）：**
 
 1. HTTP 入口最先执行方法白名单：`READ_ONLY_METHODS = new Set(["GET", "HEAD"])`。任何 `POST`/`PUT`/`PATCH`/`DELETE`/`OPTIONS` 在进入路由和访问文件系统之前直接返回 `405 {"error":"read only"}`，并带 `Allow: GET, HEAD`。
 2. 路由表只注册读取型 handler：静态页面、`/api/projects`、`/api/project`、`/api/events`、`/media/*`。不存在任何写接口、触发流水线、调用图像 API 或执行命令的入口。
-3. handler 只读取已有文件并流式返回；`serveFile` 不写文件，Web 进程不持有 `ProjectStore` 的写锁，也不调用 `save_artifact`。
+3. handler 只读取已有文件并流式返回；`serveFile` 不写文件，Web 进程不持有 `ProjectStore` 的写锁，也不调用 `save_artifact`。静态资源统一走 `public/assets/`，由 `safePublicPath()` 做 realpath 与扩展名校验。
 4. `web.test.ts` 对 `POST/PUT/PATCH/DELETE/OPTIONS` 逐个断言 405，并断言启动后不存在 `web-token.txt`。
 
 ### 9.3 安全
@@ -46,32 +46,43 @@
 - **无目录列表**；未知路径 404。
 - **无 CORS**；`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`。
 - **只读**：方法白名单 + 只读路由 + 只读 handler 三层保证；不提供任何触发图像生成或文件写入的接口。
-- **内存防护**：媒体响应使用 `createReadStream` + `pipeline()` 直接管道到响应，不读入 Buffer；JSON 响应限制在 256 KB 内；SSE 只发事件，不发图片。
+- **内存防护**：媒体响应使用 `createReadStream` + `pipe()` 直接管道到响应，不读入 Buffer；JSON 只返回项目摘要（不含图片字节）；SSE 只发事件，不发图片。
 - **日志脱敏**：`Authorization`、`apiKey`、`sk-` 模式。
 - README 明确说明：默认 `0.0.0.0` 会把画面暴露给同一网络，且没有 token；服务只读，但仍应仅在可信网络使用。
 
-### 9.4 前端（最小实现）
+### 9.4 前端结构
 
-原生 JS + CSS，无构建、无 CDN、无第三方库。
+原生 ES modules + 分文件 CSS，无构建、无 CDN、无第三方库。
 
 ```
-┌──────────────────────────────────────────────────────┐
-│ mz_automanga   [项目 ▾]   3/8 页完成   ● 实时更新   │
-├──────────────────────────────────────────────────────┤
-│  page-001                                            │
-│  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐        │
-│  │ panel1 │ │ panel2 │ │ panel3 │ │ 生成中  │        │
-│  └────────┘ └────────┘ └────────┘ └────────┘        │
-│  page-002 ...                                        │
-└──────────────────────────────────────────────────────┘
+src/web/public/
+├── index.html
+└── assets/
+    ├── css/
+    │   ├── base.css          # 变量、reset、可访问性、safe-area
+    │   ├── layout.css        # 顶栏、网格、响应式断点
+    │   ├── components.css    # 卡片、阅读器、错误/空状态
+    │   └── mobile.css        # 移动端与触屏覆盖
+    └── js/
+        ├── main.js           # 入口：启动、项目切换、视图状态
+        ├── api.js            # /api/projects、/api/project、SSE
+        ├── render.js         # 漫画网格与人设网格
+        ├── reader.js         # 全屏阅读器、键盘/滑动切换
+        ├── format.js         # 阶段名、状态文本、角色标签
+        ├── media.js          # /media URL 编码
+        └── ui.js             # DOM 查询、状态、错误与视图切换
 ```
 
-- **视图切换**：顶部“漫画 / 人设”两个 Tab。漫画按页分组；人设按角色展示 `characters/<id>/ref.png`、姓名与角色定位。
-- **网格**：漫画列宽从 220px 提升到 360px，人设列宽 320px，容器最大宽度 1800px；980px 以下降为 260/240px，560px 以下降为 160px / 单列；`loading="lazy"`；生成中显示占位，失败显示“重试中”状态点。
-- **阅读**：点击漫画或人设图进入大图，图片最大 `min(96vw, 1500px)`；`←/→` 切换上一张/下一张；`webtoon` 预设纵向滚动。
+- **视图切换**：顶部“漫画 / 人设”Tab，`aria-selected` 与 `role=tab` 同步；视图状态写入 `localStorage`。
+- **网格**：漫画列宽桌面 360px、980px 以下 260px、720px 以下最小 220px、430px 以下单列；人设桌面 300px、720px 以下单列；`loading="lazy"`、`decoding="async"`。
+- **阅读器**：点击漫画或人设图进入全屏；显示 `当前/总数`；桌面左右按钮，移动端底部按钮；支持 `←/→`、`Esc`、左右滑动；打开时锁定页面滚动。
+- **实时**：`EventSource` 只在 `state.json` 的 `revision` 变化时发送 `snapshot`；前端重绘网格，若阅读器打开则保持当前索引。
+- **移动端适配**：
+  - `viewport-fit=cover` + `env(safe-area-inset-*)`，适配刘海屏和底部手势区。
+  - ≤720px 顶栏改为两行：品牌 + Tab / 项目选择 / 状态；触控目标 ≥44px，项目选择用 16px 字号避免 iOS 聚焦缩放。
+  - 阅读图使用 `100dvh`，移动端限制在顶部计数与底部按钮之间。
+  - `prefers-reduced-motion` 下关闭淡入动画；`hover: none` 下移除放大光标。
 - **无叠加**：不渲染气泡、不渲染对白、不做缩放控件、不做编辑；文字已经在 PNG 里。
-- **实时**：`EventSource` 收到 `panel` 事件时只替换对应 `<img>` 的 `src`（加 `?v=<mtime>` 破缓存）。
-- **主题**：深色为主，跟随 `prefers-color-scheme`；窄屏单列。
 
 ### 9.5 TUI 内预览
 

@@ -337,11 +337,14 @@ mz_automanga/
 │   │   └── README.md            # 接口与接入新模型说明
 │   ├── imagegen-adapter.ts      # 唯一桥接：ProjectStore → ImageGenWorkspace
 │   ├── web/
-│   │   ├── server.ts            # HTTP、SSE、只读方法白名单、路径防护
+│   │   ├── server.ts            # 路由、SSE、只读方法白名单、启动/关闭
+│   │   ├── http.ts              # sendJson/sendText/serveFile（Range/ETag）
+│   │   ├── snapshot.ts          # 项目摘要、页/面板/人设快照
 │   │   └── public/
 │   │       ├── index.html
-│   │       ├── app.js
-│   │       └── style.css
+│   │       └── assets/
+│   │           ├── css/         # base / layout / components / mobile
+│   │           └── js/          # main / api / render / reader / format / media / ui
 │   ├── export.ts                # CBZ（内置无依赖 store-only zip）
 │   ├── previews.ts              # Web 预览图生成与缓存
 │   ├── util/stream.ts           # 流式下载/写入/CRC32（低内存）

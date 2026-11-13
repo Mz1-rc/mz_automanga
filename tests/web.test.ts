@@ -66,7 +66,21 @@ test("web server serves projects, page summaries and images read-only", async ()
 		assert.match(handle.url, /^http:\/\/127\.0\.0\.1:\d+/);
 		const index = await fetch(`${handle.url}/`);
 		assert.equal(index.status, 200);
-		assert.match(await index.text(), /mz_automanga/);
+		const html = await index.text();
+		assert.match(html, /mz_automanga/);
+		assert.match(html, /\/assets\/js\/main\.js/);
+		assert.match(html, /viewport-fit=cover/);
+
+		const css = await fetch(`${handle.url}/assets/css/base.css`);
+		assert.equal(css.status, 200);
+		assert.equal(css.headers.get("content-type"), "text/css; charset=utf-8");
+
+		const js = await fetch(`${handle.url}/assets/js/main.js`);
+		assert.equal(js.status, 200);
+		assert.equal(js.headers.get("content-type"), "text/javascript; charset=utf-8");
+
+		const assetTraversal = await fetch(`${handle.url}/assets/%2e%2e/server.ts`);
+		assert.notEqual(assetTraversal.status, 200);
 
 		const projects = await (await fetch(`${handle.url}/api/projects`)).json() as { projects: Array<{ slug: string }> };
 		assert.equal(projects.projects.length, 1);

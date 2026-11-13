@@ -1,0 +1,77 @@
+/* Mobile and touch-specific overrides. Loaded after layout/components. */
+
+@media (max-width: 720px) {
+	.tab {
+		padding: 6px 12px;
+	}
+
+	.reader {
+		align-items: flex-start;
+		padding: calc(56px + var(--safe-top)) calc(6px + var(--safe-right)) calc(76px + var(--safe-bottom)) calc(6px + var(--safe-left));
+	}
+
+	.reader img {
+		max-width: 100%;
+		max-height: calc(100dvh - 148px - var(--safe-top) - var(--safe-bottom));
+	}
+
+	.reader .nav {
+		top: auto;
+		bottom: calc(14px + var(--safe-bottom));
+		transform: none;
+		width: 52px;
+		height: 48px;
+	}
+
+	.reader .prev {
+		left: calc(50% - 64px);
+	}
+
+	.reader .next {
+		right: calc(50% - 64px);
+	}
+
+	.reader .close {
+		width: 44px;
+		height: 44px;
+	}
+
+	.reader-counter {
+		font-size: 12px;
+	}
+
+	.panel,
+	.cast-card {
+		border-radius: 8px;
+	}
+}
+
+@media (max-width: 430px) {
+	.grid,
+	.cast-grid {
+		padding-left: calc(10px + var(--safe-left));
+		padding-right: calc(10px + var(--safe-right));
+	}
+
+	.status {
+		font-size: 12px;
+	}
+
+	.reader img {
+		max-height: calc(100dvh - 144px - var(--safe-top) - var(--safe-bottom));
+	}
+}
+
+@media (hover: none) {
+	.panel,
+	.cast-card {
+		cursor: default;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.panel img,
+	.cast-card img {
+		animation: none;
+	}
+}

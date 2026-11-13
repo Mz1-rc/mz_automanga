@@ -14,7 +14,8 @@
 | `init-dir.test.ts` | 目录输入创建项目、标题取目录名、`source/inputs.json` 清单 |
 | `artifacts.test.ts` | 白名单、禁止目标、JSON 校验、原子写、快照；analysis/bible/page schema；lettering 原文/字数/气泡 |
 | `agnes.test.ts` | payload 结构、URL/b64 两条路径、429 退避、401/400 中止、超时、下载字节上限、流式写入 |
-| `web.test.ts` | 路由、SSE 首帧、默认 0.0.0.0、无 token、路径穿越、POST/PUT/PATCH/DELETE/OPTIONS 均 405、媒体 Range、拒绝端口 0/占用端口 |
+| `web.test.ts` | 路由、静态资源与 MIME、路径穿越、SSE 首帧、默认 0.0.0.0、无 token、POST/PUT/PATCH/DELETE/OPTIONS 均 405、媒体 Range、拒绝端口 0/占用端口 |
+| `imagegen.test.ts` | 假 provider + 内存 workspace 跑分镜出图；provider 注册表与未知 provider 错误 |
 | `export.test.ts` | 默认 ZIP/CBZ 条目、顺序、EOCD |
 | `compress.test.ts` | PNG 解码/下采样/压缩到 ≤500,000 字节、`.web` 缓存复用 |
 | `pipeline.e2e.test.ts` | `FakeRoleRunner` + 本地 HTTP mock 全流程；缓存跳过；剧本闸门“按假设继续” |

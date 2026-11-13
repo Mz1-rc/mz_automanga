@@ -12,7 +12,7 @@
 | [`data-model.md`](data-model.md) | `project.json`、`state.json`、`analysis.json`、`bible.json`、`pages/*.json`、`qa/report.json` | `src/state.ts`、`src/artifacts.ts` |
 | [`pipeline.md`](pipeline.md) | 嵌套 `AgentSession` 运行器、`save_artifact`、提示词组装、进度/中止 | `src/runner.ts`、`src/prompts.ts`、`src/artifact-tool.ts` |
 | [`image-generation.md`](image-generation.md) | Agnes 接口事实、请求构造、重试、参考图、灰度兜底、模型提供方抽象 | `src/imagegen/`、`src/imagegen-adapter.ts` |
-| [`web-preview.md`](web-preview.md) | 只读 Web 服务、路由、方法白名单、媒体路径、前端 | `src/web/`、`src/previews.ts` |
+| [`web-preview.md`](web-preview.md) | 只读 Web 服务、路由、方法白名单、媒体路径、前端结构与移动适配 | `src/web/`、`src/previews.ts` |
 | [`commands.md`](commands.md) | `/manga` 命令、`manga_team` 工具、后台任务与事件 | `src/commands.ts`、`src/tools.ts`、`src/app.ts` |
 | [`configuration.md`](configuration.md) | 全局/项目配置、API Key、画风预设、已定稿默认值 | `src/config.ts`、`src/keys.ts` |
 | [`operations.md`](operations.md) | 幂等、续跑、失败分层、成本、低内存约束、安全边界 | `src/state.ts`、`src/export.ts` |

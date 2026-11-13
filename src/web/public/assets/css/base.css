@@ -1,0 +1,89 @@
+:root {
+	color-scheme: dark light;
+	--bg: #0f1012;
+	--panel: #17191c;
+	--panel-strong: #1e2126;
+	--line: #2b2f36;
+	--line-strong: #3a404a;
+	--text: #e8e6e1;
+	--muted: #9aa0a8;
+	--accent: #d9b26a;
+	--danger: #e07a7a;
+	--radius: 10px;
+	--tap: 44px;
+	--safe-top: env(safe-area-inset-top, 0px);
+	--safe-bottom: env(safe-area-inset-bottom, 0px);
+	--safe-left: env(safe-area-inset-left, 0px);
+	--safe-right: env(safe-area-inset-right, 0px);
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html {
+	-webkit-text-size-adjust: 100%;
+	text-size-adjust: 100%;
+}
+
+body {
+	margin: 0;
+	min-height: 100vh;
+	min-height: 100dvh;
+	overflow-x: hidden;
+	background: var(--bg);
+	color: var(--text);
+	font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
+}
+
+body.reader-open {
+	overflow: hidden;
+}
+
+img {
+	max-width: 100%;
+}
+
+button,
+select {
+	font: inherit;
+}
+
+button {
+	-webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+::selection {
+	background: rgba(217, 178, 106, 0.35);
+}
+
+[hidden] {
+	display: none !important;
+}
+
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		scroll-behavior: auto !important;
+		transition-duration: 0.01ms !important;
+		animation-duration: 0.01ms !important;
+	}
+}

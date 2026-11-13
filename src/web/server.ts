@@ -1,15 +1,18 @@
-import { createReadStream, existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { dirname, extname, join, normalize } from "node:path";
+import { dirname, extname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { MangaConfig } from "../config.ts";
-import { readJson, resolveWithin } from "../paths.ts";
+import { resolveWithin } from "../paths.ts";
 import { selectWebMediaPath } from "../previews.ts";
 import { listProjects, ProjectStore } from "../state.ts";
-import type { Bible, MangaPage } from "../types.ts";
+import { sendJson, sendText, serveFile } from "./http.ts";
+import { projectSnapshot } from "./snapshot.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(HERE, "public");
+const ASSET_DIR = join(PUBLIC_DIR, "assets");
+const STATIC_ASSET_EXTENSIONS = new Set([".html", ".js", ".css", ".svg", ".png", ".webp", ".ico", ".woff2"]);
 
 /** Hard read-only boundary: no request may mutate project state or files. */
 const READ_ONLY_METHODS = new Set(["GET", "HEAD"]);
@@ -30,58 +33,14 @@ export interface WebServerHandle {
 	close(): Promise<void>;
 }
 
-function contentType(path: string): string {
-	switch (extname(path).toLowerCase()) {
-		case ".html":
-			return "text/html; charset=utf-8";
-		case ".js":
-			return "text/javascript; charset=utf-8";
-		case ".css":
-			return "text/css; charset=utf-8";
-		case ".json":
-			return "application/json; charset=utf-8";
-		case ".png":
-			return "image/png";
-		case ".jpg":
-		case ".jpeg":
-			return "image/jpeg";
-		case ".webp":
-			return "image/webp";
-		default:
-			return "application/octet-stream";
-	}
-}
-
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
-	const text = JSON.stringify(body);
-	res.writeHead(status, {
-		"Content-Type": "application/json; charset=utf-8",
-		"Content-Length": Buffer.byteLength(text),
-		"Cache-Control": "no-store",
-		"X-Content-Type-Options": "nosniff",
-	});
-	res.end(text);
-}
-
-function sendText(res: ServerResponse, status: number, text: string, type = "text/plain; charset=utf-8"): void {
-	res.writeHead(status, {
-		"Content-Type": type,
-		"Content-Length": Buffer.byteLength(text),
-		"Cache-Control": "no-store",
-		"X-Content-Type-Options": "nosniff",
-		"Referrer-Policy": "no-referrer",
-	});
-	res.end(text);
-}
-
 /** Resolve a media path, then verify realpath stays inside the project. */
 function safeMediaPath(projectRoot: string, rel: string): string | undefined {
 	try {
-		const abs = resolveWithin(projectRoot, normalize(rel));
+		const abs = resolveWithin(projectRoot, rel);
 		if (!existsSync(abs)) return undefined;
 		const real = realpathSync(abs);
 		const realRoot = realpathSync(projectRoot);
-		if (!real.startsWith(`${realRoot}/`)) return undefined;
+		if (!real.startsWith(`${realRoot}${sep}`)) return undefined;
 		if (!statSync(real).isFile()) return undefined;
 		return real;
 	} catch {
@@ -89,138 +48,30 @@ function safeMediaPath(projectRoot: string, rel: string): string | undefined {
 	}
 }
 
-function serveFile(req: IncomingMessage, res: ServerResponse, path: string): void {
-	const stat = statSync(path);
-	const type = contentType(path);
-	const etag = `"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
-	if (req.headers["if-none-match"] === etag) {
-		res.writeHead(304, { ETag: etag });
-		res.end();
-		return;
-	}
-	const range = req.headers.range;
-	let start = 0;
-	let end = stat.size - 1;
-	let status = 200;
-	if (range) {
-		const match = /^bytes=(\d*)-(\d*)$/.exec(range);
-		if (match) {
-			start = match[1] ? Number(match[1]) : 0;
-			end = match[2] ? Number(match[2]) : stat.size - 1;
-			if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= stat.size) {
-				res.writeHead(416, { "Content-Range": `bytes */${stat.size}` });
-				res.end();
-				return;
-			}
-			end = Math.min(end, stat.size - 1);
-			status = 206;
-		}
-	}
-	const headers: Record<string, string | number> = {
-		"Content-Type": type,
-		"Content-Length": end - start + 1,
-		"Accept-Ranges": "bytes",
-		ETag: etag,
-		"Cache-Control": "no-cache",
-		"X-Content-Type-Options": "nosniff",
-	};
-	if (status === 206) headers["Content-Range"] = `bytes ${start}-${end}/${stat.size}`;
-	res.writeHead(status, headers);
-	if (req.method === "HEAD") {
-		res.end();
-		return;
-	}
-	const stream = createReadStream(path, { start, end, highWaterMark: 64 * 1024 });
-	stream.on("error", () => res.destroy());
-	stream.pipe(res);
-}
-
-function pageSummary(projectRoot: string): { pages: Array<{ id: string; index: number; panels: Array<{ id: string; file: string; status: string; version: number }> }> } {
-	const pages: Array<{ id: string; index: number; panels: Array<{ id: string; file: string; status: string; version: number }> }> = [];
-	const pagesDir = join(projectRoot, "pages");
-	if (!existsSync(pagesDir)) return { pages };
-	for (const name of readdirSafe(pagesDir)) {
-		if (!/^page-\d{3}\.json$/.test(name)) continue;
-		const id = name.replace(/\.json$/, "");
-		const page = readJson<MangaPage>(join(pagesDir, name));
-		if (!page) continue;
-		pages.push({
-			id,
-			index: page.index,
-			panels: page.panels.map((panel, index) => {
-				// Media URLs are /media/<slug>/<project-relative path>; include the
-				// pages/ prefix so the server can resolve the file from the project root.
-				const file = `pages/${id}/panel-${String(index + 1).padStart(2, "0")}.png`;
-				const abs = join(projectRoot, file);
-				let version = 0;
-				try {
-					version = Math.floor(statSync(abs).mtimeMs);
-				} catch {
-					version = 0;
-				}
-				return { id: panel.id, file, status: panel.image?.status ?? (version ? "done" : "pending"), version };
-			}),
-		});
-	}
-	pages.sort((a, b) => a.index - b.index);
-	return { pages };
-}
-
-function readdirSafe(path: string): string[] {
+/** Static files live under public/; reject traversal, symlinks and unknown types. */
+function safePublicPath(rel: string): string | undefined {
+	if (!rel || rel.includes("\0")) return undefined;
+	let decoded: string;
 	try {
-		return readdirSync(path);
+		decoded = decodeURIComponent(rel);
 	} catch {
-		return [];
+		return undefined;
 	}
-}
-
-function characterSummary(store: ProjectStore): Array<{
-	id: string;
-	name: string;
-	role: string;
-	file: string;
-	version: number;
-}> {
-	const bible = readJson<Bible>(join(store.root, "bible.json"));
-	if (!bible || !Array.isArray(bible.cast)) return [];
-	return bible.cast.map((member) => {
-		const fallback = `characters/${member.id}/ref.png`;
-		let rel = (member.refSheet || fallback).replaceAll("\\", "/");
-		let abs: string;
-		try {
-			abs = resolveWithin(store.root, rel);
-		} catch {
-			rel = fallback;
-			abs = join(store.root, rel);
-		}
-		let version = 0;
-		try {
-			version = Math.floor(statSync(abs).mtimeMs);
-		} catch {
-			version = 0;
-		}
-		return {
-			id: member.id,
-			name: member.name || member.id,
-			role: member.role || "",
-			file: rel,
-			version,
-		};
-	});
-}
-
-function projectSnapshot(store: ProjectStore): unknown {
-	const summary = pageSummary(store.root);
-	return {
-		slug: store.project.slug,
-		title: store.project.title,
-		phase: store.state.phase,
-		revision: store.state.revision,
-		stats: store.state.stats,
-		style: { preset: store.project.style.preset, ratio: store.project.style.ratio },
-		...summary,
-		characters: characterSummary(store),
-	};
+	let abs: string;
+	try {
+		abs = resolveWithin(ASSET_DIR, decoded);
+	} catch {
+		return undefined;
+	}
+	if (!STATIC_ASSET_EXTENSIONS.has(extname(abs).toLowerCase())) return undefined;
+	try {
+		const real = realpathSync(abs);
+		const realRoot = realpathSync(ASSET_DIR);
+		if (real !== realRoot && !real.startsWith(`${realRoot}${sep}`)) return undefined;
+		return statSync(real).isFile() ? real : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 export async function startWebServer(options: WebServerOptions): Promise<WebServerHandle> {
@@ -248,8 +99,13 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
 					serveFile(req, res, join(PUBLIC_DIR, "index.html"));
 					return;
 				}
-				if (url.pathname === "/app.js" || url.pathname === "/style.css") {
-					serveFile(req, res, join(PUBLIC_DIR, url.pathname.slice(1)));
+				if (url.pathname.startsWith("/assets/")) {
+					const abs = safePublicPath(url.pathname.slice("/assets/".length));
+					if (!abs) {
+						sendText(res, 404, "404 Not Found");
+						return;
+					}
+					serveFile(req, res, abs);
 					return;
 				}
 				if (url.pathname === "/api/projects") {
