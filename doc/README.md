@@ -11,7 +11,7 @@
 | [`architecture.md`](architecture.md) | 摘要、目标/非目标、关键设计决策、总体架构、目录结构、角色/阶段/闸门 | `src/pipeline.ts`、`src/types.ts` |
 | [`data-model.md`](data-model.md) | `project.json`、`state.json`、`analysis.json`、`bible.json`、`pages/*.json`、`qa/report.json` | `src/state.ts`、`src/artifacts.ts` |
 | [`pipeline.md`](pipeline.md) | 嵌套 `AgentSession` 运行器、`save_artifact`、提示词组装、进度/中止 | `src/runner.ts`、`src/prompts.ts`、`src/artifact-tool.ts` |
-| [`image-generation.md`](image-generation.md) | Agnes 接口事实、请求构造、重试、参考图、灰度兜底、模型提供方抽象 | `src/imagegen/`、`src/imagegen-adapter.ts` |
+| [`image-generation.md`](image-generation.md) | Agnes/Ark 接口事实、请求构造、重试、参考图、灰度兜底、模型提供方抽象 | `src/imagegen/`、`src/imagegen-adapter.ts` |
 | [`web-preview.md`](web-preview.md) | 只读 Web 服务、路由、方法白名单、媒体路径、前端结构与移动适配 | `src/web/`、`src/previews.ts` |
 | [`commands.md`](commands.md) | `/manga` 命令、`manga_team` 工具、后台任务与事件 | `src/commands.ts`、`src/tools.ts`、`src/app.ts` |
 | [`configuration.md`](configuration.md) | 全局/项目配置、API Key、画风预设、已定稿默认值 | `src/config.ts`、`src/keys.ts` |

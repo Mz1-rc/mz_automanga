@@ -1,10 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, extname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { ensureDir, truncateMiddle } from "../../paths.ts";
 import { readImageSize, isJpeg, isPng } from "../../util/png.ts";
 import { downloadToFile, readHead, writeBase64ToFile } from "../../util/stream.ts";
 import { ImageGenError } from "../errors.ts";
+import { joinPrompt, refsToImages } from "./shared.ts";
 import type {
 	ImageGenerateRequest,
 	ImageGenerateResult,
@@ -88,26 +89,6 @@ function withTimeout(parent: AbortSignal | undefined, timeoutMs: number): { sign
 	};
 }
 
-function mimeFor(path: string): string {
-	const ext = extname(path).toLowerCase();
-	if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
-	if (ext === ".webp") return "image/webp";
-	return "image/png";
-}
-
-/** Build a data URI for a local reference. Reads exactly one file at a time. */
-function localRefToDataUri(path: string): string {
-	const data = readFileSync(path);
-	return `data:${mimeFor(path)};base64,${data.toString("base64")}`;
-}
-
-function joinPrompt(prompt: string, negative?: string): string {
-	const core = prompt.trim();
-	const neg = (negative ?? "").trim();
-	if (!neg) return core;
-	return `${core}\n\nAvoid: ${neg}`;
-}
-
 export class AgnesClient implements ImageProvider {
 	readonly id = "agnes";
 	private readonly opts: AgnesClientOptions;
@@ -142,14 +123,8 @@ export class AgnesClient implements ImageProvider {
 			extra_body: { response_format: options.b64 ? "b64_json" : "url" },
 		};
 		if (options.ratio) payload.ratio = options.ratio;
-		if (options.refs && options.refs.length > 0) {
-			const images: string[] = [];
-			for (const ref of options.refs) {
-				if (ref.url) images.push(ref.url);
-				else if (ref.path) images.push(localRefToDataUri(ref.path));
-			}
-			if (images.length > 0) payload.extra_body.image = images;
-		}
+		const images = refsToImages(options.refs);
+		if (images) payload.extra_body.image = images;
 		return payload;
 	}
 

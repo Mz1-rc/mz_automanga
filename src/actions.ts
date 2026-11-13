@@ -2,7 +2,8 @@ import { copyFileSync, existsSync, readdirSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { composeStylePrompt, makeStyle, STYLE_PRESETS, type MangaConfig } from "./config.ts";
 import { createProviderFromConfig } from "./imagegen-adapter.ts";
-import { resolveAgnesKey, maskKey, saveAgnesKey } from "./keys.ts";
+import { resolveProviderKey, maskKey, saveProviderKey } from "./keys.ts";
+import { imageProviders } from "./imagegen/index.ts";
 import { ensureDir, listDirs, resolveWithin, writeJsonAtomic } from "./paths.ts";
 import { MangaPipeline, gateIdForPhase, isRole, roleForPhase, roleLabel, pipelineSummary, type PipelineUi } from "./pipeline.ts";
 import type { ImageArchiveFormat } from "./export.ts";
@@ -571,6 +572,9 @@ export function actionConfig(ctx: ActionCtx, app: AppLike): string {
 	const { store, config } = app.ensure(ctx.cwd);
 	const safe = structuredClone(config);
 	if (safe.agnes.apiKey) safe.agnes.apiKey = maskKey(safe.agnes.apiKey);
+	for (const settings of Object.values(safe.providers ?? {})) {
+		if (settings.apiKey) settings.apiKey = maskKey(settings.apiKey);
+	}
 	const stylePrompt = composeStylePrompt(store.project.style);
 	return [
 		`项目：${store.project.slug}`,
@@ -609,31 +613,68 @@ export async function actionModels(ctx: ActionCtx, app: AppLike, roleArg?: strin
 	return `${roleLabel(role as RoleId)}：${model || "跟随宿主"}。`;
 }
 
-export async function actionKey(ctx: ActionCtx, app: AppLike, options: { key?: string; test?: boolean } = {}): Promise<string> {
+export async function actionKey(
+	ctx: ActionCtx,
+	app: AppLike,
+	options: { key?: string; test?: boolean; provider?: string } = {},
+): Promise<string> {
 	let config = app.baseConfig();
-	let resolved: ReturnType<typeof resolveAgnesKey>;
+	const providerId = (options.provider || config.image.provider || "agnes").trim().toLowerCase();
+	if (!imageProviders.has(providerId)) {
+		throw new Error(`未知图像提供方：${providerId}（可用：${imageProviders.list().join(", ")}）`);
+	}
+	const envName =
+		config.providers?.[providerId]?.apiKeyEnv ||
+		(providerId === "agnes" ? config.agnes.apiKeyEnv : `${providerId.replace(/[^a-z0-9]+/gi, "_").toUpperCase()}_API_KEY`);
+	let resolved: ReturnType<typeof resolveProviderKey>;
 	try {
-		resolved = resolveAgnesKey(config, app.agentDir);
+		resolved = resolveProviderKey(config, app.agentDir, providerId);
 	} catch (error) {
 		resolved = undefined;
 		notify(ctx as never, error instanceof Error ? error.message : String(error), "warning");
 	}
 	let key = options.key?.trim();
 	if (!key && !resolved && ctx.hasUI) {
-		notify(ctx as never, "注意：输入内容会回显。更安全的做法是设置环境变量 AGNES_API_KEY。", "warning");
-		key = (await ctx.ui.input("Agnes API Key", ""))?.trim();
+		notify(ctx as never, `注意：输入内容会回显。更安全的做法是设置环境变量 ${envName}。`, "warning");
+		key = (await ctx.ui.input(`${providerId} API Key`, ""))?.trim();
 	}
 	if (key) {
-		saveAgnesKey(app.agentDir, key);
+		saveProviderKey(app.agentDir, providerId, key);
 		config = app.baseConfig();
-		resolved = resolveAgnesKey(config, app.agentDir);
+		resolved = resolveProviderKey(config, app.agentDir, providerId);
 	}
-	if (!resolved) throw new Error("尚未设置 Agnes API Key。设置 AGNES_API_KEY，或运行 /manga key 输入。");
-	if (!options.test) return `已保存 API Key（${maskKey(resolved.key)}，来自 ${resolved.source === "env" ? "环境变量" : "配置文件"}）。`;
-	const client = createProviderFromConfig(config, resolved.key, { retries: 0 });
-	const result = await client.test?.();
-	if (!result) throw new Error("当前图像提供方不支持 Key 测试。");
-	return `API Key 可用。测试图：${result.width}x${result.height}（${result.format}）。`;
+	if (!resolved) throw new Error(`尚未设置 ${providerId} API Key。设置 ${envName}，或运行 /manga key --provider ${providerId} 输入。`);
+	if (!options.test) {
+		return `已保存 ${providerId} API Key（${maskKey(resolved.key)}，来自 ${resolved.source === "env" ? "环境变量" : "配置文件"}）。`;
+	}
+	const client = createProviderFromConfig(config, resolved.key, { retries: 0 }, { provider: providerId });
+	if (!client.test) throw new Error(`图像提供方 ${providerId} 不支持 Key 测试。`);
+	const result = await client.test();
+	return `${providerId} API Key 可用。测试图：${result.width}x${result.height}（${result.format}）。`;
+}
+
+export function actionProvider(ctx: ActionCtx, app: AppLike, providerArg?: string, modelArg?: string): string {
+	const { store, config } = app.ensure(ctx.cwd);
+	const available = imageProviders.list();
+	const current = store.project.image.provider || "agnes";
+	if (!providerArg) {
+		const labels: Record<string, string> = { agnes: "免费", ark: "付费" };
+		const list = available
+			.map((id) => `${id}${id === current ? "（当前）" : ""}${labels[id] ? `（${labels[id]}）` : ""}`)
+			.join("、");
+		return [
+			`当前图像提供方：${current} · 模型：${store.project.image.model}`,
+			`可用：${list}`,
+			"切换：/manga provider <id> [--model <model>]",
+		].join("\n");
+	}
+	const id = providerArg.trim().toLowerCase();
+	if (!imageProviders.has(id)) throw new Error(`未知图像提供方：${id}（可用：${available.join(", ")}）`);
+	const model = modelArg?.trim() || config.providers?.[id]?.model || imageProviders.defaultModel(id);
+	if (!model) throw new Error(`提供方 ${id} 没有默认模型，请用 --model 指定`);
+	store.project.image = { ...store.project.image, provider: id, model };
+	store.saveProject();
+	return `图像提供方已切换为 ${id}（模型 ${model}）。新出图生效；已有图片需 /manga regen 或重新运行出图阶段。`;
 }
 
 export function actionDoctor(ctx: ActionCtx, app: AppLike): string {
@@ -656,8 +697,9 @@ export function actionDoctor(ctx: ActionCtx, app: AppLike): string {
 		lines.push(error instanceof Error ? error.message : String(error));
 	}
 	try {
-		const key = resolveAgnesKey(config, app.agentDir);
-		lines.push(`Agnes Key：${key ? `✔ ${maskKey(key.key)}（${key.source}）` : "✗ 未设置"}`);
+		const providerId = config.image.provider || "agnes";
+		const key = resolveProviderKey(config, app.agentDir, providerId);
+		lines.push(`${providerId} Key：${key ? `✔ ${maskKey(key.key)}（${key.source}）` : "✗ 未设置"}`);
 	} catch (error) {
 		lines.push(`Agnes Key：✗ ${error instanceof Error ? error.message : String(error)}`);
 	}

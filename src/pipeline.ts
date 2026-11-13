@@ -4,7 +4,7 @@ import { ImageGenError, generateCharacterImages, generatePanelImages, regenerate
 import { createProjectImageWorkspace, createProviderFromConfig } from "./imagegen-adapter.ts";
 import { validatePage, validateRefImages, validateRoleOutputs, roleTargets } from "./artifacts.ts";
 import { composeStylePrompt, type MangaConfig } from "./config.ts";
-import { resolveAgnesKey } from "./keys.ts";
+import { resolveProviderKey } from "./keys.ts";
 import { readJson, readText, resolveWithin, writeAtomic, writeJsonAtomic, ensureDir, fileExists, nowIso } from "./paths.ts";
 import { ensureProjectWebPreviews } from "./previews.ts";
 import { buildSystemPrompt, buildTaskPrompt } from "./prompts.ts";
@@ -1054,13 +1054,17 @@ export class MangaPipeline {
 
 	private getClient(): ImageProvider {
 		if (this.client) return this.client;
-		const resolved = resolveAgnesKey(this.config, this.agentDir);
+		const providerId = (this.config.image.provider || "agnes").trim().toLowerCase();
+		const resolved = resolveProviderKey(this.config, this.agentDir, providerId);
 		if (!resolved) {
+			const envName =
+				this.config.providers?.[providerId]?.apiKeyEnv ||
+				(providerId === "agnes" ? this.config.agnes.apiKeyEnv : `${providerId.toUpperCase()}_API_KEY`);
 			throw new Error(
-				`未找到 Agnes API Key。请设置环境变量 ${this.config.agnes.apiKeyEnv}，或运行 /manga key 保存。`,
+				`未找到 ${providerId} API Key。请设置环境变量 ${envName}，或运行 /manga key --provider ${providerId} 保存。`,
 			);
 		}
-		this.client = createProviderFromConfig(this.config, resolved.key);
+		this.client = createProviderFromConfig(this.config, resolved.key, {}, { provider: providerId });
 		return this.client;
 	}
 }

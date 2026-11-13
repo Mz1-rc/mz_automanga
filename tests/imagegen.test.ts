@@ -133,6 +133,8 @@ test("image stages run against a provider + workspace port without app internals
 
 test("provider registry exposes built-ins and accepts custom factories", () => {
 	assert.ok(imageProviders.has("agnes"));
+	assert.ok(imageProviders.has("ark"));
+	assert.equal(imageProviders.defaultModel("ark"), "doubao-seedream-5-5-261028");
 	assert.equal(createImageProvider("agnes", { model: "m", apiKey: "k" }).id, "agnes");
 	assert.throws(
 		() => createImageProvider("missing", { model: "m", apiKey: "k" }),

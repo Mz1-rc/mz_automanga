@@ -8,7 +8,7 @@
  */
 import { existsSync, renameSync } from "node:fs";
 import type { MangaConfig } from "./config.ts";
-import { createImageProvider, type ImageProvider, type ImageProviderConfig, type ImageGenWorkspace } from "./imagegen/index.ts";
+import { createImageProvider, imageProviders, type ImageProvider, type ImageProviderConfig, type ImageGenWorkspace } from "./imagegen/index.ts";
 import { panelRelPath, readText, resolveWithin, writeAtomic } from "./paths.ts";
 import { ensureWebPreview } from "./previews.ts";
 import type { ProjectStore } from "./state.ts";
@@ -124,19 +124,36 @@ export function createProjectImageWorkspace(store: ProjectStore): ImageGenWorksp
  * Provider-specific values can live in `image.providerOptions`; Agnes keeps
  * reading its legacy top-level `agnes` block as the fallback.
  */
+function isAnotherProvidersDefault(config: MangaConfig, providerId: string, model: string): boolean {
+	return Object.entries(config.providers ?? {}).some(
+		([id, settings]) => id !== providerId && Boolean(settings.model) && settings.model === model,
+	);
+}
+
 export function createProviderFromConfig(
 	config: MangaConfig,
 	apiKey: string,
 	overrides: Omit<Partial<ImageProviderConfig>, "id"> = {},
+	target: { provider?: string; model?: string } = {},
 ): ImageProvider {
 	const options = config.image.providerOptions ?? {};
-	const providerId = config.image.provider || "agnes";
+	const providerId = (target.provider || config.image.provider || "agnes").trim().toLowerCase();
+	const settings = config.providers?.[providerId];
+	const isCurrent = providerId === (config.image.provider || "agnes").trim().toLowerCase();
 	const baseUrl =
 		typeof options.baseUrl === "string" && options.baseUrl.trim()
 			? options.baseUrl
-			: config.agnes.baseUrl;
+			: settings?.baseUrl || (providerId === "agnes" ? config.agnes.baseUrl : undefined);
+	const configuredModel = isCurrent && !isAnotherProvidersDefault(config, providerId, config.image.model) ? config.image.model : undefined;
+	const model =
+		target.model ||
+		configuredModel ||
+		settings?.model ||
+		imageProviders.defaultModel(providerId) ||
+		config.image.model ||
+		config.agnes.model;
 	return createImageProvider(providerId, {
-		model: config.image.model || config.agnes.model,
+		model,
 		baseUrl,
 		apiKey,
 		timeoutMs: config.image.timeoutMs,

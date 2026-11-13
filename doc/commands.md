@@ -26,13 +26,14 @@
 | `/manga prompt <page> <panel>` | 打印最终提示词与参考图 |
 | `/manga qa` | 重新运行结构 QA |
 | `/manga models` | 逐角色设置模型与 thinking level |
+| `/manga provider [id] [--model <model>]` | 查看/切换图像模型提供方：`agnes`（免费默认）/ `ark`（付费） |
 | `/manga config` | 查看有效配置 |
 | `/manga auto on\|off` | 全自动模式（跳过闸门，仍做校验） |
 | `/manga pause` / `/manga resume` | 暂停 / 恢复 |
 | `/manga abort` | 中止当前后台任务（也可 Esc） |
 | `/manga doctor` | 检查状态、文件、锁、未完成运行 |
 | `/manga open [slug]` | 列出/切换项目 |
-| `/manga key [--test]` | 设置/测试 Agnes Key |
+| `/manga key [--provider <id>] [--test] [--key <key>]` | 设置/测试当前或指定图像模型的 Key |
 | `/manga rollback <runId>` | 用某次运行快照回滚产物 |
 | `/manga export [--cbz]` | 导出；默认仅图片普通 ZIP，`--cbz` 导出 CBZ |
 | `/manga compress` | 生成/刷新 <500 KB 的 Web 预览图 |
@@ -62,7 +63,7 @@ pi.registerTool({
 });
 ```
 
-Actions：`init | next | step | run_role | approve | revise | status | web | regen_panel | style | configure | abort | doctor | open | export | compress_images | run_all | set_auto`。`export_format` 默认为 `zip`，可设为 `cbz`。
+Actions：`init | next | step | run_role | approve | revise | status | web | regen_panel | style | provider | configure | abort | doctor | open | export | compress_images | run_all | set_auto`。`export_format` 默认为 `zip`，可设为 `cbz`。
 
 ### 10.3 后台任务（单飞）
 

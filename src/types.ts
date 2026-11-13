@@ -137,6 +137,13 @@ export interface MemoryConfig {
 	zipChunkBytes: number;
 }
 
+export interface ImageProviderSettings {
+	baseUrl?: string;
+	model?: string;
+	apiKey?: string;
+	apiKeyEnv?: string;
+}
+
 export interface MangaConfig {
 	schemaVersion: 1;
 	workspace: string;
@@ -149,6 +156,8 @@ export interface MangaConfig {
 		timeoutMs: number;
 		retries: number;
 	};
+	/** Per-provider settings; `agnes` mirrors the legacy top-level block. */
+	providers: Record<string, ImageProviderSettings>;
 	image: ImageConfig;
 	agents: AgentConfig;
 	gates: Record<GateId, GatePolicy>;

@@ -332,8 +332,11 @@ mz_automanga/
 │   │   ├── config.ts            # 图像默认值与归一化
 │   │   ├── references.ts        # 参考图 / cacheKey / panel 路径
 │   │   ├── stages.ts            # 角色立绘 + 逐格出图 + 单格重画
-│   │   ├── provider.ts          # ImageProviderRegistry
-│   │   ├── providers/agnes.ts   # Agnes 实现
+│   │   ├── provider.ts          # ImageProviderRegistry + 默认模型
+│   │   ├── providers/
+│   │   │   ├── agnes.ts         # Agnes（免费，默认）
+│   │   │   ├── ark.ts           # 火山方舟 Seedream（付费）
+│   │   │   └── shared.ts        # 参考图/data URI 等公共工具
 │   │   └── README.md            # 接口与接入新模型说明
 │   ├── imagegen-adapter.ts      # 唯一桥接：ProjectStore → ImageGenWorkspace
 │   ├── web/

@@ -64,6 +64,19 @@ export const DEFAULT_MEMORY: MemoryConfig = {
 	zipChunkBytes: 1024 * 1024,
 };
 
+export const DEFAULT_PROVIDERS: NonNullable<MangaConfig["providers"]> = {
+	agnes: {
+		baseUrl: "https://apihub.agnes-ai.com/v1",
+		model: "agnes-image-2.5-flash",
+		apiKeyEnv: "AGNES_API_KEY",
+	},
+	ark: {
+		baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+		model: "doubao-seedream-5-5-261028",
+		apiKeyEnv: "ARK_API_KEY",
+	},
+};
+
 export const DEFAULT_CONFIG: MangaConfig = {
 	schemaVersion: 1,
 	workspace: ".automanga",
@@ -75,6 +88,7 @@ export const DEFAULT_CONFIG: MangaConfig = {
 		timeoutMs: 240000,
 		retries: 3,
 	},
+	providers: structuredClone(DEFAULT_PROVIDERS),
 	image: DEFAULT_IMAGE,
 	agents: DEFAULT_AGENTS,
 	gates: DEFAULT_GATES,
@@ -115,6 +129,16 @@ function clamp(value: unknown, fallback: number, min: number, max: number): numb
 
 export function normalizeConfig(config: MangaConfig): MangaConfig {
 	normalizeImageConfig(config.image);
+	if (!config.providers || typeof config.providers !== "object" || Array.isArray(config.providers)) {
+		config.providers = {};
+	}
+	for (const [id, defaults] of Object.entries(DEFAULT_PROVIDERS)) {
+		const current = config.providers[id];
+		config.providers[id] = {
+			...defaults,
+			...(current && typeof current === "object" && !Array.isArray(current) ? current : {}),
+		};
+	}
 	config.agents.timeoutMs = clamp(config.agents.timeoutMs, 600000, 60000, 30 * 60 * 1000);
 	config.agents.maxAttempts = clamp(config.agents.maxAttempts, 2, 1, 4);
 	config.memory.logRotateBytes = clamp(config.memory.logRotateBytes, 2 * 1024 * 1024, 256 * 1024, 32 * 1024 * 1024);

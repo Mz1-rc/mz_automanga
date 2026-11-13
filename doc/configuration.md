@@ -23,6 +23,10 @@
     "timeoutMs": 240000,
     "retries": 3
   },
+  "providers": {
+    "agnes": { "baseUrl": "https://apihub.agnes-ai.com/v1", "model": "agnes-image-2.5-flash", "apiKeyEnv": "AGNES_API_KEY" },
+    "ark": { "baseUrl": "https://ark.cn-beijing.volces.com/api/v3", "model": "doubao-seedream-5-5-261028", "apiKeyEnv": "ARK_API_KEY" }
+  },
   "image": { "provider": "agnes", "providerOptions": {}, "draftSize": "1K", "finalSize": "2K", "maxRefs": 4, "usePreviousPanel": true, "keepVersions": 3 },
   "agents": { "thinkingLevel": "medium", "timeoutMs": 600000, "maxAttempts": 2, "overrides": {} },
   "gates": { "script": "auto", "cast": "always", "storyboard": "always", "final": "always" },
@@ -35,16 +39,27 @@
 
 ### 11.2 Key 解析
 
-1. 环境变量 `AGNES_API_KEY`（推荐，不落盘）。
-2. 全局配置 `agnes.apiKey`（文件权限必须 0600，否则警告并拒绝读取）。
-3. `/manga key` → `ctx.ui.input`（提示会回显）→ 保存并 `chmod 600`。
+按当前 `image.provider` 解析：
+
+1. 环境变量 `AGNES_API_KEY`（agnes，默认）或 `ARK_API_KEY`（ark）（推荐，不落盘）。
+2. 全局配置 `providers.<id>.apiKey`（文件权限必须 0600，否则警告并拒绝读取）；agnes 兼容旧的 `agnes.apiKey`。
+3. `/manga key [--provider <id>]` → `ctx.ui.input`（提示会回显）→ 保存并 `chmod 600`。
 4. 无 Key 且无 UI → 报错并给出设置说明。
+
+切换模型提供方：
+
+```text
+/manga provider            # 查看当前与可用 provider
+/manga provider ark        # 付费 Seedream；自动写入默认模型
+/manga provider ark --model doubao-seedream-5-5-261028
+/manga key --provider ark --test
+```
 
 安全：
 
 - Key 永不写入项目目录、永不进入角色提示词、永不写入日志（脱敏 `Bearer ***`）。
 - 角色会话不需要 Key（只有主进程调用图像 API）。
-- `/manga key --test` 发一张 1K 图验证。
+- `/manga key --test` 发一张 1K 图验证（付费模型会产生一次费用）。
 
 ### 11.3 画风预设
 
@@ -82,7 +97,7 @@ no watermark, no signature, no text other than the specified lettering
 | 剧本输入 | `--script <文件|目录>`；目录递归读取 `.md/.markdown/.txt/.text`，按自然顺序合并；不再接受粘贴/命令行正文 |
 | 工作区 | `<cwd>/.automanga/` |
 | 模型 | 跟随宿主当前模型；可用 `/manga models` 逐角色覆盖 |
-| 出图 | 1K 草稿，`--final` 为 2K；串行；URL 输出 + 流式下载 |
+| 出图 | 默认 `agnes`（免费）；可切 `ark`（付费 Seedream）；1K 草稿，`--final` 为 2K；串行；URL 输出 + 流式下载 |
 | 视觉 QA | v0.2 预留；v0.1 只做结构 QA（代码，零 token） |
 | Web | 只读，只显示图片；默认 `0.0.0.0`；无 token/鉴权；网格 + 人设 + 单页阅读；预览图 <500,000 字节；`start/stop/status/restart`；端口必须手动指定，不随机 |
 | 最终打包 | 默认 `exports/<slug>.zip`（仅图片普通 ZIP）；`--cbz` 导出 `.cbz` |

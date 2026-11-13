@@ -20,7 +20,9 @@ src/imagegen/
 ├── stages.ts                 # 角色立绘、逐格出图、单格重画
 ├── provider.ts               # ImageProviderRegistry + create/register 辅助函数
 ├── providers/
-│   └── agnes.ts              # Agnes Image 2.5 Flash 实现（原 src/agnes.ts）
+│   ├── agnes.ts              # Agnes Image 2.5 Flash 实现（免费）
+│   ├── ark.ts                # 火山方舟 Seedream 实现（付费）
+│   └── shared.ts             # 参考图/data URI、negative 合并等公共工具
 └── README.md
 ```
 
@@ -28,7 +30,7 @@ src/imagegen/
 `ImageGenWorkspace`，并把 `MangaConfig` 映射成 `ImageProviderConfig`。
 
 ```
-pipeline ──▶ imagegen-adapter ──▶ imagegen/stages ──▶ ImageProvider（agnes / 新模型）
+pipeline ──▶ imagegen-adapter ──▶ imagegen/stages ──▶ ImageProvider（agnes / ark / 新模型）
                     │                                      │
                     └── ProjectStore / previews / 灰度化     └── HTTP / 文件
 ```
@@ -135,12 +137,13 @@ import {
   type ImageProvider,
 } from "./imagegen/index.ts";
 
-// 内置：agnes
-imageProviders.list();                 // ["agnes"]
+// 内置：agnes（免费，默认）、ark（付费 Seedream）
+imageProviders.list();                 // ["agnes", "ark"]
+imageProviders.defaultModel("ark");    // "doubao-seedream-5-5-261028"
 createImageProvider("agnes", { model: "agnes-image-2.5-flash", apiKey });
 
-// 运行时注册新模型
-registerImageProvider("my-model", (config) => new MyProvider(config));
+// 运行时注册新模型（第三个参数为默认模型，可选）
+registerImageProvider("my-model", (config) => new MyProvider(config), "my-model-v1");
 createImageProvider("my-model", { model: "my-model-v1", apiKey });
 ```
 
@@ -215,9 +218,30 @@ imageProviders.register("my-model", createMyProvider);
 ```
 
 Agnes 兼容旧配置：未写 `image.provider` 时默认 `agnes`；`image.providerOptions.baseUrl`
-未设置时回退到顶层 `agnes.baseUrl`，Key 仍由 `src/keys.ts` 解析（环境变量或 0600 配置文件）。
+未设置时回退到 `providers.<id>.baseUrl`，Agnes 再回退到顶层 `agnes.baseUrl`。
+Key 由 `src/keys.ts` 解析（`providers.<id>.apiKeyEnv` / `providers.<id>.apiKey`，或 0600 配置文件）。
 
-4. 不需要改 `pipeline.ts`、Agnes 相关命令或存储层；流水线只依赖 `ImageProvider`。
+内置 Ark（付费）示例：
+
+```text
+/manga provider ark
+/manga key --provider ark --test
+```
+
+```json
+{
+  "providers": {
+    "ark": {
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+      "model": "doubao-seedream-5-5-261028",
+      "apiKeyEnv": "ARK_API_KEY"
+    }
+  },
+  "image": { "provider": "ark", "model": "doubao-seedream-5-5-261028" }
+}
+```
+
+4. 不需要改 `pipeline.ts`、命令或存储层；流水线只依赖 `ImageProvider`。
 
 ## 注意
 

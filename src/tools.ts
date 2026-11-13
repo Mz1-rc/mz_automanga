@@ -16,6 +16,7 @@ import {
 	actionOpen,
 	actionPause,
 	actionPrompt,
+	actionProvider,
 	actionQa,
 	actionRegen,
 	actionResume,
@@ -48,6 +49,7 @@ const ACTIONS = [
 	"cast",
 	"qa",
 	"style",
+	"provider",
 	"configure",
 	"set_auto",
 	"pause",
@@ -65,7 +67,7 @@ const ACTIONS = [
 const HELP = `manga_team 动作：
 init / status / next / step / run_all / run_role / approve / revise
 web / web_stop / web_status / regen_panel / prompt_panel / cast / qa
-style / configure / set_auto / pause / resume / abort / doctor / open
+style / provider / configure / set_auto / pause / resume / abort / doctor / open
 rollback / export / compress_images / list
 
 export 默认导出图片 ZIP；export_format="cbz" 可导出 CBZ。
@@ -114,7 +116,8 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 			web_action: Type.Optional(
 				StringEnum(["start", "stop", "status", "restart"], { description: "web 子动作，默认 start" }),
 			),
-			model: Type.Optional(Type.String({ description: "configure 的模型 provider/id" })),
+			model: Type.Optional(Type.String({ description: "configure 的角色模型 provider/id；provider 动作时可作为图像模型 id" })),
+			provider: Type.Optional(Type.String({ description: "provider 动作：agnes（免费默认）或 ark（付费）" })),
 			export_format: Type.Optional(
 				StringEnum(["zip", "cbz"], { description: "export 的打包格式；默认 zip（仅图片的普通 zip）" }),
 			),
@@ -191,6 +194,8 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 					return text(actionQa(actionCtx, app));
 				case "style":
 					return text(await actionStyle(actionCtx, app, params.style));
+				case "provider":
+					return text(actionProvider(actionCtx, app, params.provider, params.model));
 				case "configure":
 					return text(await actionModels(actionCtx, app, params.role, params.model));
 				case "set_auto":

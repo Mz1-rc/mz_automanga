@@ -16,6 +16,7 @@ import {
 	actionOpen,
 	actionPause,
 	actionPrompt,
+	actionProvider,
 	actionQa,
 	actionRegen,
 	actionResume,
@@ -38,7 +39,7 @@ interface Parsed {
 }
 
 const BOOLEAN_FLAGS = new Set(["force", "final", "open", "regen", "test", "vision", "no-export", "cbz"]);
-const VALUE_FLAGS = new Set(["script", "dir", "title", "style", "custom", "ratio", "adaptation", "host", "port", "note", "key", "auto"]);
+const VALUE_FLAGS = new Set(["script", "dir", "title", "style", "custom", "ratio", "adaptation", "host", "port", "note", "key", "auto", "provider", "model"]);
 
 export function parseArgs(input: string): Parsed {
 	const tokens: string[] = [];
@@ -99,10 +100,11 @@ const HELP = `mz_automanga · 多 Agent 漫画流水线
   /manga qa                重新结构审校
   /manga style [preset]    查看/切换画风（会提示影响范围）
   /manga models [role] [provider/id]
+  /manga provider [id] [--model <model>]  查看/切换图像模型（agnes 免费默认，ark 付费）
   /manga config            查看有效配置
   /manga auto on|off       全自动模式（跳过闸门）
   /manga pause|resume|abort
-  /manga key [--test] [--key <key>]
+  /manga key [--provider <id>] [--test] [--key <key>]
   /manga doctor
   /manga open [slug]
   /manga rollback [runId]
@@ -210,6 +212,9 @@ export async function handleMangaCommand(
 			case "models":
 				ctx.ui.notify(await actionModels(ctx, app, positionals[0], positionals[1]), "info");
 				return;
+			case "provider":
+				ctx.ui.notify(actionProvider(ctx, app, positionals[0], str(flags, "model") || positionals[1]), "info");
+				return;
 			case "config":
 				ctx.ui.notify(actionConfig(ctx, app), "info");
 				return;
@@ -220,7 +225,7 @@ export async function handleMangaCommand(
 				return;
 			}
 			case "key":
-				ctx.ui.notify(await actionKey(ctx, app, { key: str(flags, "key"), test: bool(flags, "test") }), "info");
+				ctx.ui.notify(await actionKey(ctx, app, { key: str(flags, "key"), test: bool(flags, "test"), provider: str(flags, "provider") }), "info");
 				return;
 			case "doctor":
 				ctx.ui.notify(actionDoctor(ctx, app), "info");
@@ -265,6 +270,7 @@ export function registerMangaCommand(pi: ExtensionAPI, app: MangaApp): void {
 				"qa",
 				"style",
 				"models",
+				"provider",
 				"config",
 				"auto",
 				"pause",
