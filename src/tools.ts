@@ -117,7 +117,7 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 				StringEnum(["start", "stop", "status", "restart"], { description: "web 子动作，默认 start" }),
 			),
 			model: Type.Optional(Type.String({ description: "configure 的角色模型 provider/id；provider 动作时可直接指定图像模型 id" })),
-			provider: Type.Optional(Type.String({ description: "provider 动作：agnes（免费默认）或 ark（付费，交互选择模型）" })),
+			provider: Type.Optional(Type.String({ description: "provider 动作：省略时交互选择提供方；agnes（免费默认）或 ark（付费，交互选择模型）" })),
 			export_format: Type.Optional(
 				StringEnum(["zip", "cbz"], { description: "export 的打包格式；默认 zip（仅图片的普通 zip）" }),
 			),

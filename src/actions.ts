@@ -658,19 +658,23 @@ export async function actionProvider(ctx: ActionCtx, app: AppLike, providerArg?:
 	const { store, config } = app.ensure(ctx.cwd);
 	const available = imageProviders.list();
 	const current = store.project.image.provider || "agnes";
-	if (!providerArg) {
-		const labels: Record<string, string> = { agnes: "免费", ark: "付费" };
-		const list = available
-			.map((id) => `${id}${id === current ? "（当前）" : ""}${labels[id] ? `（${labels[id]}）` : ""}`)
-			.join("、");
-		return [
-			`当前绘制模型：${describeDrawingModel(store.project.image)}`,
-			`可用提供方：${list}`,
-			"切换：/manga provider <id> [--model <model>]",
-		].join("\n");
+	let id = providerArg?.trim().toLowerCase();
+	if (!id) {
+		if (!ctx.hasUI) {
+			return [
+				`当前绘制模型：${describeDrawingModel(store.project.image)}`,
+				`可用提供方：${available.join("、")}`,
+				"切换：/manga provider <id> [--model <model>]",
+			].join("\n");
+		}
+		const keepLabel = "保持当前";
+		const labels = providerChoiceLabels(available, current);
+		labels.push(keepLabel);
+		const choice = await ctx.ui.select(`选择图像提供方（当前：${describeDrawingModel(store.project.image)}）`, labels);
+		if (!choice || choice === keepLabel) return `未修改绘制模型。当前：${describeDrawingModel(store.project.image)}；可用提供方：${available.join("、")}`;
+		id = available[labels.indexOf(choice)];
 	}
-	const id = providerArg.trim().toLowerCase();
-	if (!imageProviders.has(id)) throw new Error(`未知图像提供方：${id}（可用：${available.join(", ")}）`);
+	if (!id || !imageProviders.has(id)) throw new Error(`未知图像提供方：${id || ""}（可用：${available.join(", ")}）`);
 	const defaultModel = config.providers?.[id]?.model || imageProviders.defaultModel(id) || imageProviders.models(id)[0]?.id;
 	let model = modelArg?.trim();
 	if (!model) {
@@ -693,10 +697,25 @@ export async function actionProvider(ctx: ActionCtx, app: AppLike, providerArg?:
 		}
 	}
 	if (!model) throw new Error(`提供方 ${id} 没有默认模型，请用 --model 指定`);
+	if (store.project.image.provider === id && store.project.image.model === model) {
+		return `绘制模型未变化：${describeDrawingModel(store.project.image)}。`;
+	}
 	store.project.image = { ...store.project.image, provider: id, model };
 	store.saveProject();
 	refreshStatus(ctx, app, store);
 	return `图像提供方已切换为 ${id}（绘制模型 ${model}）。新出图生效；已有图片需 /manga regen 或重新运行出图阶段。`;
+}
+
+function providerChoiceLabels(ids: string[], current: string): string[] {
+	const details: Record<string, { label: string; fee: string }> = {
+		agnes: { label: "Agnes Image 2.5 Flash", fee: "免费" },
+		ark: { label: "火山方舟 Seedream", fee: "付费" },
+	};
+	return ids.map((id) => {
+		const detail = details[id];
+		const meta = detail ? `${detail.label}，${detail.fee}` : "";
+		return `${id}${meta ? ` · ${meta}` : ""}${id === current ? "（当前）" : ""}`;
+	});
 }
 
 function modelChoiceLabels(

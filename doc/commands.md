@@ -26,7 +26,7 @@
 | `/manga prompt <page> <panel>` | 打印最终提示词与参考图 |
 | `/manga qa` | 重新运行结构 QA |
 | `/manga models` | 逐角色设置模型与 thinking level |
-| `/manga provider [id] [--model <model>]` | 查看/切换图像模型提供方：`agnes`（免费默认）/ `ark`（付费）；切换 `ark` 时可交互选择 Seedream 模型 |
+| `/manga provider [id] [--model <model>]` | 切换图像模型提供方：`agnes`（免费默认）/ `ark`（付费）；无 id 时交互选择，切换 `ark` 时再选 Seedream 模型 |
 | `/manga config` | 查看有效配置 |
 | `/manga auto on\|off` | 全自动模式（跳过闸门，仍做校验） |
 | `/manga pause` / `/manga resume` | 暂停 / 恢复 |

@@ -43,6 +43,45 @@ test("ark exposes selectable Seedream models", () => {
 	assert.ok(models.every((model) => model.id.startsWith("doubao-seedream-")));
 });
 
+test("provider without args prints status without UI", async () => {
+	const { cwd } = makeTestProject();
+	const app = new MangaApp(tempDir());
+	const output = await actionProvider(fakeCtx(cwd) as never, app);
+	assert.match(output, /当前绘制模型：agnes\/agnes-image-2\.5-flash/);
+	assert.match(output, /可用提供方：agnes、ark/);
+	assert.equal(app.active?.project.image.provider, "agnes");
+});
+
+test("provider without args opens provider and model pickers", async () => {
+	const { cwd } = makeTestProject();
+	const app = new MangaApp(tempDir());
+	const seen: Array<{ title: string; options: string[] }> = [];
+	const ctx = fakeCtx(cwd, {
+		hasUI: true,
+		select(title, options) {
+			seen.push({ title, options });
+			if (title.startsWith("选择图像提供方")) return options.find((option) => option.startsWith("ark"));
+			return options.find((option) => option.startsWith("doubao-seedream-5-0-lite-260128"));
+		},
+	});
+	await actionProvider(ctx as never, app);
+	assert.match(seen[0]?.title ?? "", /选择图像提供方/);
+	assert.ok(seen[0]?.options.some((option) => option.startsWith("agnes")));
+	assert.ok(seen[0]?.options.some((option) => option.startsWith("ark")));
+	assert.match(seen[1]?.title ?? "", /选择 ark 绘制模型/);
+	assert.equal(app.active?.project.image.provider, "ark");
+	assert.equal(app.active?.project.image.model, "doubao-seedream-5-0-lite-260128");
+});
+
+test("provider without args keeps the current model when cancelled", async () => {
+	const { cwd } = makeTestProject();
+	const app = new MangaApp(tempDir());
+	const ctx = fakeCtx(cwd, { hasUI: true, select: () => undefined });
+	const output = await actionProvider(ctx as never, app);
+	assert.match(output, /未修改绘制模型/);
+	assert.equal(app.active?.project.image.provider, "agnes");
+});
+
 test("provider ark uses the default model without UI and reports it in status", async () => {
 	const { cwd } = makeTestProject();
 	const app = new MangaApp(tempDir());

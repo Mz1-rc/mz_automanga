@@ -49,7 +49,7 @@
 切换模型提供方：
 
 ```text
-/manga provider            # 查看当前与可用 provider
+/manga provider            # 交互选择提供方（无 UI 时只显示当前与可用提供方）
 /manga provider ark        # 付费 Seedream；交互选择模型（无 UI 时用默认模型）
 /manga provider ark --model doubao-seedream-5-0-lite-260128
 /manga key --provider ark --test

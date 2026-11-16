@@ -230,6 +230,7 @@ Key 由 `src/keys.ts` 解析（`providers.<id>.apiKeyEnv` / `providers.<id>.apiK
 内置 Ark（付费）示例：
 
 ```text
+/manga provider            # 交互选择提供方（无 UI 时只显示当前）
 /manga provider ark        # 交互选择 Seedream 模型（无 UI 时用默认模型）
 /manga key --provider ark --test
 ```

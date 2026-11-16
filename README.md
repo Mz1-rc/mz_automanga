@@ -112,7 +112,7 @@ init
 | `/manga qa` | 重新结构审校 |
 | `/manga style [preset]` | 查看/切换画风（会重做立绘、提示词、画面） |
 | `/manga models [role] [provider/id]` | 逐角色设置模型 |
-| `/manga provider [id] [--model <model>]` | 查看/切换绘制模型提供方：`agnes`（免费，默认）或 `ark`（火山方舟 Seedream，付费）；切到 `ark` 时可交互选择模型 |
+| `/manga provider [id] [--model <model>]` | 切换绘制模型提供方：`agnes`（免费，默认）或 `ark`（火山方舟 Seedream，付费）；无 id 时交互选择提供方，切到 `ark` 时再交互选择模型 |
 | `/manga config` | 查看有效配置（Key 已脱敏） |
 | `/manga auto on\|off` | 全自动模式（跳过闸门） |
 | `/manga key [--provider <id>] [--test] [--key <key>]` | 设置/测试当前或指定图像模型的 Key |
@@ -269,6 +269,7 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
 切换当前项目：
 
 ```text
+/manga provider            # 交互选择提供方（无 UI 时只显示当前与可用提供方）
 /manga provider ark        # 交互选择 Seedream 模型（无 UI 时用默认模型）
 /manga provider ark --model doubao-seedream-5-0-lite-260128
 /manga key --provider ark --test
@@ -295,7 +296,7 @@ Ark 内置可选模型：`doubao-seedream-5-5-261028`（默认）、`doubao-seed
 ## 测试
 
 ```bash
-node --experimental-strip-types --test tests/*.test.ts   # 54 个用例
+node --experimental-strip-types --test tests/*.test.ts   # 57 个用例
 ```
 
 测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering/空镜校验、改编等级与提示词注入、黑白画风颜色锁与灰度兜底、Agnes/Ark 重试与流式下载上限、图片压缩到 <500 KB、Web 只读方法白名单/默认 0.0.0.0/SSE/Range/中文路径/人设图、ZIP/CBZ 导出、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过、图像模块 provider/workspace 解耦、Ark payload/尺寸映射、模型选择与状态显示、错误分层。

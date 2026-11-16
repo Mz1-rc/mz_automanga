@@ -100,7 +100,7 @@ const HELP = `mz_automanga · 多 Agent 漫画流水线
   /manga qa                重新结构审校
   /manga style [preset]    查看/切换画风（会提示影响范围）
   /manga models [role] [provider/id]
-  /manga provider [id] [--model <model>]  查看/切换绘制模型提供方（ark 会列出可选模型）
+  /manga provider [id] [--model <model>]  切换提供方；无 id 时交互选择，ark 会列出可选模型
   /manga config            查看有效配置
   /manga auto on|off       全自动模式（跳过闸门）
   /manga pause|resume|abort

@@ -131,6 +131,6 @@
 - 负向词：Ark 无独立 negative 字段，`Avoid: …` 合并到 prompt 末尾。
 - 错误：401/403 → `auth`；400/404/422 → `invalid`；429/5xx → `retryable`；`data[].error` 与顶层 `error` 都解析。
 - Key：环境变量 `ARK_API_KEY` 或 `providers.ark.apiKey`；命令 `/manga key --provider ark`。
-- 切换：`/manga provider ark` 会把当前项目切到 Ark，并在交互界面列出 Seedream 模型供选择（无 UI 时写入默认模型）；`/manga provider ark --model <id>` 可直接指定。重新出图可用 `/manga regen` 或重新运行出图阶段。
+- 切换：`/manga provider` 交互选择提供方，再为 Ark 选择 Seedream 模型；`/manga provider ark` 直接切到 Ark 并列出模型（无 UI 时写入默认模型）；`/manga provider ark --model <id>` 可直接指定。重新出图可用 `/manga regen` 或重新运行出图阶段。
 
 ---
