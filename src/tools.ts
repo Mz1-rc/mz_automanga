@@ -116,8 +116,8 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 			web_action: Type.Optional(
 				StringEnum(["start", "stop", "status", "restart"], { description: "web 子动作，默认 start" }),
 			),
-			model: Type.Optional(Type.String({ description: "configure 的角色模型 provider/id；provider 动作时可作为图像模型 id" })),
-			provider: Type.Optional(Type.String({ description: "provider 动作：agnes（免费默认）或 ark（付费）" })),
+			model: Type.Optional(Type.String({ description: "configure 的角色模型 provider/id；provider 动作时可直接指定图像模型 id" })),
+			provider: Type.Optional(Type.String({ description: "provider 动作：agnes（免费默认）或 ark（付费，交互选择模型）" })),
 			export_format: Type.Optional(
 				StringEnum(["zip", "cbz"], { description: "export 的打包格式；默认 zip（仅图片的普通 zip）" }),
 			),
@@ -195,7 +195,7 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 				case "style":
 					return text(await actionStyle(actionCtx, app, params.style));
 				case "provider":
-					return text(actionProvider(actionCtx, app, params.provider, params.model));
+					return text(await actionProvider(actionCtx, app, params.provider, params.model));
 				case "configure":
 					return text(await actionModels(actionCtx, app, params.role, params.model));
 				case "set_auto":

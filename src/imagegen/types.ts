@@ -83,6 +83,15 @@ export interface ImageProvider {
 
 export type ImageProviderFactory = (config: ImageProviderConfig) => ImageProvider;
 
+/** A model exposed by a provider for interactive selection. */
+export interface ImageModelOption {
+	id: string;
+	/** Human-readable name, e.g. "Seedream 5.5". */
+	label?: string;
+	/** Short hint, e.g. "推荐 · 1K/2K". */
+	note?: string;
+}
+
 /** Image stage settings (a structural subset of the app `ImageConfig`). */
 export interface ImageGenConfig {
 	provider?: string;

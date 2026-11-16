@@ -98,7 +98,7 @@ init
 | 命令 | 作用 |
 |---|---|
 | `/manga init [--script <文件\|目录>] [--title <书名>] [--style <preset>] [--adaptation strict\|balanced\|free]` | 新建项目；无参数时进入交互；改编等级未给出时会在首次剧本分析前询问 |
-| `/manga status` | 阶段、页/格、闸门、Web 地址 |
+| `/manga status` | 阶段、页/格、闸门、当前绘制模型、Web 地址 |
 | `/manga next` / `/manga step` | 后台推进下一阶段 |
 | `/manga run-all` | 后台跑完剩余流程 |
 | `/manga run <role>` | 运行指定角色 |
@@ -112,7 +112,7 @@ init
 | `/manga qa` | 重新结构审校 |
 | `/manga style [preset]` | 查看/切换画风（会重做立绘、提示词、画面） |
 | `/manga models [role] [provider/id]` | 逐角色设置模型 |
-| `/manga provider [id] [--model <model>]` | 查看/切换图像模型提供方：`agnes`（免费，默认）或 `ark`（火山方舟 Seedream，付费） |
+| `/manga provider [id] [--model <model>]` | 查看/切换绘制模型提供方：`agnes`（免费，默认）或 `ark`（火山方舟 Seedream，付费）；切到 `ark` 时可交互选择模型 |
 | `/manga config` | 查看有效配置（Key 已脱敏） |
 | `/manga auto on\|off` | 全自动模式（跳过闸门） |
 | `/manga key [--provider <id>] [--test] [--key <key>]` | 设置/测试当前或指定图像模型的 Key |
@@ -134,6 +134,7 @@ init
 - 进度条与 `step/total`；
 - 当前动作（例如 `page-002/panel-03 · 读取 pages/page-002.json`）；
 - 项目累计输入/输出 token、**当前子 agent 实时 token**、费用、耗时；
+- 当前绘制模型（`provider/model`）；
 - 子 agent 的上下文用量（可用时）；
 - Web 地址或“未启动”；
 - 待确认问题与最近错误。
@@ -268,9 +269,14 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
 切换当前项目：
 
 ```text
-/manga provider ark
+/manga provider ark        # 交互选择 Seedream 模型（无 UI 时用默认模型）
+/manga provider ark --model doubao-seedream-5-0-lite-260128
 /manga key --provider ark --test
 ```
+
+Ark 内置可选模型：`doubao-seedream-5-5-261028`（默认）、`doubao-seedream-5-0-pro-260628`、
+`doubao-seedream-5-0-lite-260128`、`doubao-seedream-4-0-250828`；也可在交互菜单里输入自定义模型 id。
+`/manga status` 会显示当前绘制模型。
 
 或直接配置 `image.provider` / `image.model`。接入新模型只需实现 `ImageProvider` 并注册工厂：
 
@@ -289,10 +295,10 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
 ## 测试
 
 ```bash
-node --experimental-strip-types --test tests/*.test.ts   # 50 个用例
+node --experimental-strip-types --test tests/*.test.ts   # 54 个用例
 ```
 
-测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering/空镜校验、改编等级与提示词注入、黑白画风颜色锁与灰度兜底、Agnes/Ark 重试与流式下载上限、图片压缩到 <500 KB、Web 只读方法白名单/默认 0.0.0.0/SSE/Range/中文路径/人设图、ZIP/CBZ 导出、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过、图像模块 provider/workspace 解耦、Ark payload/尺寸映射与错误分层。
+测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering/空镜校验、改编等级与提示词注入、黑白画风颜色锁与灰度兜底、Agnes/Ark 重试与流式下载上限、图片压缩到 <500 KB、Web 只读方法白名单/默认 0.0.0.0/SSE/Range/中文路径/人设图、ZIP/CBZ 导出、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过、图像模块 provider/workspace 解耦、Ark payload/尺寸映射、模型选择与状态显示、错误分层。
 
 ## 文档
 

@@ -18,7 +18,7 @@
 | `/manga run <role>` | 后台运行当前阶段对应的角色 |
 | `/manga approve [意见]` | 通过当前闸门并继续 |
 | `/manga revise <意见>` | 带意见重跑当前闸门的产出角色 |
-| `/manga status` | 阶段、页/格、闸门、当前任务、token、Web 地址 |
+| `/manga status` | 阶段、页/格、闸门、当前绘制模型、当前任务、token、Web 地址 |
 | `/manga web start\|stop\|status\|restart --port <端口> [--host H] [--open]` | 开关/查看只读预览服务；默认 0.0.0.0、无 token；端口不会随机分配 |
 | `/manga regen <page> <panel> [--note "…"] [--final]` | 重生成单格 |
 | `/manga style [preset]` | 查看/切换画风（会提示影响范围） |
@@ -26,7 +26,7 @@
 | `/manga prompt <page> <panel>` | 打印最终提示词与参考图 |
 | `/manga qa` | 重新运行结构 QA |
 | `/manga models` | 逐角色设置模型与 thinking level |
-| `/manga provider [id] [--model <model>]` | 查看/切换图像模型提供方：`agnes`（免费默认）/ `ark`（付费） |
+| `/manga provider [id] [--model <model>]` | 查看/切换图像模型提供方：`agnes`（免费默认）/ `ark`（付费）；切换 `ark` 时可交互选择 Seedream 模型 |
 | `/manga config` | 查看有效配置 |
 | `/manga auto on\|off` | 全自动模式（跳过闸门，仍做校验） |
 | `/manga pause` / `/manga resume` | 暂停 / 恢复 |

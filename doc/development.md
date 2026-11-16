@@ -16,6 +16,7 @@
 | `agnes.test.ts` | payload 结构、URL/b64 两条路径、429 退避、401/400 中止、超时、下载字节上限、流式写入 |
 | `web.test.ts` | 路由、静态资源与 MIME、路径穿越、SSE 首帧、默认 0.0.0.0、无 token、POST/PUT/PATCH/DELETE/OPTIONS 均 405、媒体 Range、拒绝端口 0/占用端口 |
 | `imagegen.test.ts` | 假 provider + 内存 workspace 跑分镜出图；provider 注册表与未知 provider 错误 |
+| `provider.test.ts` | Ark 可选模型列表、非交互默认模型、交互选模型/自定义 id、`/manga status` 绘制模型 |
 | `ark.test.ts` | Ark payload（显式像素尺寸、watermark=false、response_format）、模型档位映射、URL 参考图、401/429/单图错误分层 |
 | `export.test.ts` | 默认 ZIP/CBZ 条目、顺序、EOCD |
 | `compress.test.ts` | PNG 解码/下采样/压缩到 ≤500,000 字节、`.web` 缓存复用 |

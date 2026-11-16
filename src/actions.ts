@@ -248,6 +248,7 @@ export function actionStatus(ctx: ActionCtx, app: AppLike): string {
 		const lines = [
 			pipelineSummary(store),
 			`画风：${store.project.style.label} · ${store.project.style.ratio} · ${store.project.style.preset}`,
+			`绘制模型：${describeDrawingModel(store.project.image)}`,
 			`改编：${adaptationLabel(store.project.adaptation)}`,
 			`目录：${store.root}`,
 			webHandle ? `Web：${webHandle.url}（${webHandle.host}:${webHandle.port}）` : "Web：未启动（/manga web start --port <端口>）",
@@ -653,7 +654,7 @@ export async function actionKey(
 	return `${providerId} API Key 可用。测试图：${result.width}x${result.height}（${result.format}）。`;
 }
 
-export function actionProvider(ctx: ActionCtx, app: AppLike, providerArg?: string, modelArg?: string): string {
+export async function actionProvider(ctx: ActionCtx, app: AppLike, providerArg?: string, modelArg?: string): Promise<string> {
 	const { store, config } = app.ensure(ctx.cwd);
 	const available = imageProviders.list();
 	const current = store.project.image.provider || "agnes";
@@ -663,18 +664,59 @@ export function actionProvider(ctx: ActionCtx, app: AppLike, providerArg?: strin
 			.map((id) => `${id}${id === current ? "（当前）" : ""}${labels[id] ? `（${labels[id]}）` : ""}`)
 			.join("、");
 		return [
-			`当前图像提供方：${current} · 模型：${store.project.image.model}`,
-			`可用：${list}`,
+			`当前绘制模型：${describeDrawingModel(store.project.image)}`,
+			`可用提供方：${list}`,
 			"切换：/manga provider <id> [--model <model>]",
 		].join("\n");
 	}
 	const id = providerArg.trim().toLowerCase();
 	if (!imageProviders.has(id)) throw new Error(`未知图像提供方：${id}（可用：${available.join(", ")}）`);
-	const model = modelArg?.trim() || config.providers?.[id]?.model || imageProviders.defaultModel(id);
+	const defaultModel = config.providers?.[id]?.model || imageProviders.defaultModel(id) || imageProviders.models(id)[0]?.id;
+	let model = modelArg?.trim();
+	if (!model) {
+		const options = imageProviders.models(id);
+		if (ctx.hasUI && options.length > 1) {
+			const customLabel = "自定义模型 id…";
+			const labels = modelChoiceLabels(options, store.project.image.model, defaultModel);
+			labels.push(customLabel);
+			const choice = await ctx.ui.select(`选择 ${id} 绘制模型`, labels);
+			if (!choice) return "未修改图像提供方。";
+			if (choice === customLabel) {
+				const custom = (await ctx.ui.input(`${id} 模型 id`, defaultModel ?? ""))?.trim();
+				if (!custom) return "未修改图像提供方。";
+				model = custom;
+			} else {
+				model = options[labels.indexOf(choice)]?.id;
+			}
+		} else {
+			model = defaultModel;
+		}
+	}
 	if (!model) throw new Error(`提供方 ${id} 没有默认模型，请用 --model 指定`);
 	store.project.image = { ...store.project.image, provider: id, model };
 	store.saveProject();
-	return `图像提供方已切换为 ${id}（模型 ${model}）。新出图生效；已有图片需 /manga regen 或重新运行出图阶段。`;
+	refreshStatus(ctx, app, store);
+	return `图像提供方已切换为 ${id}（绘制模型 ${model}）。新出图生效；已有图片需 /manga regen 或重新运行出图阶段。`;
+}
+
+function modelChoiceLabels(
+	options: Array<{ id: string; label?: string; note?: string }>,
+	currentModel: string,
+	defaultModel?: string,
+): string[] {
+	return options.map((option) => {
+		const meta = [option.label, option.note].filter(Boolean).join(" · ");
+		const tags = [option.id === currentModel ? "当前" : "", option.id === defaultModel ? "默认" : ""].filter(Boolean);
+		return `${option.id}${meta ? ` · ${meta}` : ""}${tags.length ? `（${tags.join("，")}）` : ""}`;
+	});
+}
+
+/** Compact provider/model description used by status output. */
+export function describeDrawingModel(image: { provider?: string; model?: string }): string {
+	const provider = image.provider?.trim() || "agnes";
+	const model = image.model?.trim() || imageProviders.defaultModel(provider) || "未设置";
+	const info = imageProviders.models(provider).find((option) => option.id === model);
+	return `${provider}/${model}${info?.label ? ` · ${info.label}` : ""}`;
 }
 
 export function actionDoctor(ctx: ActionCtx, app: AppLike): string {

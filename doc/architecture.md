@@ -332,7 +332,7 @@ mz_automanga/
 │   │   ├── config.ts            # 图像默认值与归一化
 │   │   ├── references.ts        # 参考图 / cacheKey / panel 路径
 │   │   ├── stages.ts            # 角色立绘 + 逐格出图 + 单格重画
-│   │   ├── provider.ts          # ImageProviderRegistry + 默认模型
+│   │   ├── provider.ts          # ImageProviderRegistry + 默认模型/可选模型
 │   │   ├── providers/
 │   │   │   ├── agnes.ts         # Agnes（免费，默认）
 │   │   │   ├── ark.ts           # 火山方舟 Seedream（付费）

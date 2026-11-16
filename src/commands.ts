@@ -100,7 +100,7 @@ const HELP = `mz_automanga · 多 Agent 漫画流水线
   /manga qa                重新结构审校
   /manga style [preset]    查看/切换画风（会提示影响范围）
   /manga models [role] [provider/id]
-  /manga provider [id] [--model <model>]  查看/切换图像模型（agnes 免费默认，ark 付费）
+  /manga provider [id] [--model <model>]  查看/切换绘制模型提供方（ark 会列出可选模型）
   /manga config            查看有效配置
   /manga auto on|off       全自动模式（跳过闸门）
   /manga pause|resume|abort
@@ -213,7 +213,7 @@ export async function handleMangaCommand(
 				ctx.ui.notify(await actionModels(ctx, app, positionals[0], positionals[1]), "info");
 				return;
 			case "provider":
-				ctx.ui.notify(actionProvider(ctx, app, positionals[0], str(flags, "model") || positionals[1]), "info");
+				ctx.ui.notify(await actionProvider(ctx, app, positionals[0], str(flags, "model") || positionals[1]), "info");
 				return;
 			case "config":
 				ctx.ui.notify(actionConfig(ctx, app), "info");

@@ -152,6 +152,7 @@ export function updateStatus(
 	lines.push(
 		`Token：入 ${formatTokens(total.input)} / 出 ${formatTokens(total.output)}${active ? ` · 本角色 入 ${formatTokens(active.input)} / 出 ${formatTokens(active.output)}` : ""}${cost ? ` · ${cost}` : ""}${elapsed ? ` · 耗时 ${elapsed}` : ""}`,
 	);
+	lines.push(`绘制模型：${project.image.provider || "agnes"}/${project.image.model || "未设置"}`);
 	if (status?.contextTokens !== undefined) {
 		const percent = status.contextPercent !== undefined ? ` · ${Math.round(status.contextPercent)}%` : "";
 		lines.push(`上下文：${formatTokens(status.contextTokens)}${percent}`);

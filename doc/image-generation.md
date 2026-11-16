@@ -103,7 +103,8 @@
 | `ImageProvider` | `src/imagegen/types.ts` | 单个模型的 `generate()` / `test()` / `dispose()`；新模型实现此接口 |
 | `ImageGenWorkspace` | `src/imagegen/types.ts` | 存储与后处理端口（读写 page、版本、sourceUrl、灰度、Web 预览） |
 
-- 模型注册：`imageProviders.register(id, factory, defaultModel?)`；内置 `agnes`（免费）与 `ark`（付费 Seedream），切换 `image.provider` 即可换模型。
+- 模型注册：`imageProviders.register(id, factory, defaultModel?, models?)`；内置 `agnes`（免费）与 `ark`（付费 Seedream），切换 `image.provider` 即可换模型。
+- 模型列表：`imageProviders.models("ark")` 返回交互选择用的模型元数据；`/manga provider ark` 会展示，`/manga status` 显示当前绘制模型。
 - 配置：`image.provider` + `image.providerOptions`；各 provider 的 `baseUrl` / `apiKeyEnv` 在全局 `providers` 块；Agnes 仍兼容顶层 `agnes.baseUrl`。
 - 阶段函数：`generateCharacterImages()`、`generatePanelImages()`、`regeneratePanel()`，只依赖 provider 与 workspace。
 - 宿主适配：`src/imagegen-adapter.ts` 的 `createProjectImageWorkspace(store)` 与 `createProviderFromConfig(config, key)`。
@@ -119,6 +120,7 @@
 | Endpoint | `POST https://ark.cn-beijing.volces.com/api/v3/images/generations` |
 | 鉴权 | `Authorization: Bearer <ARK_API_KEY>` |
 | 默认模型 | `doubao-seedream-5-5-261028` |
+| 可选模型 | `doubao-seedream-5-5-261028`（默认）、`doubao-seedream-5-0-pro-260628`、`doubao-seedream-5-0-lite-260128`、`doubao-seedream-4-0-250828`；也可用 `--model` 传自定义 id |
 | 费用 | 付费（按火山方舟计费） |
 | 参考图 | 顶层 `image: string[]`（URL 或 `data:image/...;base64,...`） |
 | 返回 | 顶层 `response_format: "url" \| "b64_json"`；URL 24 小时有效 |
@@ -129,6 +131,6 @@
 - 负向词：Ark 无独立 negative 字段，`Avoid: …` 合并到 prompt 末尾。
 - 错误：401/403 → `auth`；400/404/422 → `invalid`；429/5xx → `retryable`；`data[].error` 与顶层 `error` 都解析。
 - Key：环境变量 `ARK_API_KEY` 或 `providers.ark.apiKey`；命令 `/manga key --provider ark`。
-- 切换：`/manga provider ark` 会把当前项目切到 Ark 并写入默认模型；重新出图可用 `/manga regen` 或重新运行出图阶段。
+- 切换：`/manga provider ark` 会把当前项目切到 Ark，并在交互界面列出 Seedream 模型供选择（无 UI 时写入默认模型）；`/manga provider ark --model <id>` 可直接指定。重新出图可用 `/manga regen` 或重新运行出图阶段。
 
 ---

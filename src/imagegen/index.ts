@@ -23,7 +23,7 @@ export * from "./references.ts";
 export * from "./stages.ts";
 export * from "./provider.ts";
 export { AgnesClient, AgnesError, createAgnesProvider } from "./providers/agnes.ts";
-export { ArkClient, createArkProvider, DEFAULT_ARK_MODEL } from "./providers/ark.ts";
+export { ArkClient, ARK_MODELS, createArkProvider, DEFAULT_ARK_MODEL } from "./providers/ark.ts";
 export type {
 	AgnesClientOptions,
 	AgnesReference,

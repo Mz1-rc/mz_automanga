@@ -50,10 +50,14 @@
 
 ```text
 /manga provider            # 查看当前与可用 provider
-/manga provider ark        # 付费 Seedream；自动写入默认模型
-/manga provider ark --model doubao-seedream-5-5-261028
+/manga provider ark        # 付费 Seedream；交互选择模型（无 UI 时用默认模型）
+/manga provider ark --model doubao-seedream-5-0-lite-260128
 /manga key --provider ark --test
 ```
+
+Ark 内置模型列表：`doubao-seedream-5-5-261028`（默认）、`doubao-seedream-5-0-pro-260628`、
+`doubao-seedream-5-0-lite-260128`、`doubao-seedream-4-0-250828`；交互菜单也允许输入自定义模型 id。
+`/manga status` 显示当前绘制模型（`provider/model`）。
 
 安全：
 
@@ -97,7 +101,7 @@ no watermark, no signature, no text other than the specified lettering
 | 剧本输入 | `--script <文件|目录>`；目录递归读取 `.md/.markdown/.txt/.text`，按自然顺序合并；不再接受粘贴/命令行正文 |
 | 工作区 | `<cwd>/.automanga/` |
 | 模型 | 跟随宿主当前模型；可用 `/manga models` 逐角色覆盖 |
-| 出图 | 默认 `agnes`（免费）；可切 `ark`（付费 Seedream）；1K 草稿，`--final` 为 2K；串行；URL 输出 + 流式下载 |
+| 出图 | 默认 `agnes`（免费）；可切 `ark`（付费 Seedream，可交互选模型）；1K 草稿，`--final` 为 2K；串行；URL 输出 + 流式下载 |
 | 视觉 QA | v0.2 预留；v0.1 只做结构 QA（代码，零 token） |
 | Web | 只读，只显示图片；默认 `0.0.0.0`；无 token/鉴权；网格 + 人设 + 单页阅读；预览图 <500,000 字节；`start/stop/status/restart`；端口必须手动指定，不随机 |
 | 最终打包 | 默认 `exports/<slug>.zip`（仅图片普通 ZIP）；`--cbz` 导出 `.cbz` |

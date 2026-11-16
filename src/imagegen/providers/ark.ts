@@ -8,6 +8,7 @@ import { ImageGenError } from "../errors.ts";
 import type {
 	ImageGenerateRequest,
 	ImageGenerateResult,
+	ImageModelOption,
 	ImageProvider,
 	ImageProviderConfig,
 	ImageProviderTestResult,
@@ -17,6 +18,14 @@ import type {
 import { joinPrompt, refsToImages } from "./shared.ts";
 
 export const DEFAULT_ARK_MODEL = "doubao-seedream-5-5-261028";
+
+/** Seedream models exposed by `/manga provider ark` for interactive selection. */
+export const ARK_MODELS: ImageModelOption[] = [
+	{ id: DEFAULT_ARK_MODEL, label: "Seedream 5.5", note: "推荐 · 1K/2K" },
+	{ id: "doubao-seedream-5-0-pro-260628", label: "Seedream 5.0 Pro", note: "1K/2K" },
+	{ id: "doubao-seedream-5-0-lite-260128", label: "Seedream 5.0 Lite", note: "最低 2K" },
+	{ id: "doubao-seedream-4-0-250828", label: "Seedream 4.0", note: "1K/2K/4K" },
+];
 
 const ARK_DEFAULTS = {
 	baseUrl: "https://ark.cn-beijing.volces.com/api/v3",

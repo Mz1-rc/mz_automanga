@@ -140,10 +140,14 @@ import {
 // 内置：agnes（免费，默认）、ark（付费 Seedream）
 imageProviders.list();                 // ["agnes", "ark"]
 imageProviders.defaultModel("ark");    // "doubao-seedream-5-5-261028"
+imageProviders.models("ark");          // [{ id, label, note }, …] 供 /manga provider 交互选择
 createImageProvider("agnes", { model: "agnes-image-2.5-flash", apiKey });
 
-// 运行时注册新模型（第三个参数为默认模型，可选）
-registerImageProvider("my-model", (config) => new MyProvider(config), "my-model-v1");
+// 运行时注册新模型（第三个参数为默认模型，第四个参数为可选模型列表）
+registerImageProvider("my-model", (config) => new MyProvider(config), "my-model-v1", [
+  { id: "my-model-v1", label: "My Model v1" },
+  { id: "my-model-v2", label: "My Model v2" },
+]);
 createImageProvider("my-model", { model: "my-model-v1", apiKey });
 ```
 
@@ -200,7 +204,9 @@ export function createMyProvider(config: ImageProviderConfig): ImageProvider {
 2. 在 `src/imagegen/provider.ts` 注册（或插件启动时调用 `registerImageProvider`）：
 
 ```ts
-imageProviders.register("my-model", createMyProvider);
+imageProviders.register("my-model", createMyProvider, "my-model-v1", [
+  { id: "my-model-v1", label: "My Model v1" },
+]);
 ```
 
 3. 选择它（全局或项目配置）：
@@ -224,7 +230,7 @@ Key 由 `src/keys.ts` 解析（`providers.<id>.apiKeyEnv` / `providers.<id>.apiK
 内置 Ark（付费）示例：
 
 ```text
-/manga provider ark
+/manga provider ark        # 交互选择 Seedream 模型（无 UI 时用默认模型）
 /manga key --provider ark --test
 ```
 
