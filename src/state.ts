@@ -44,7 +44,7 @@ const ALLOWED: Record<Phase, Phase[]> = {
 	prompts: ["image_gen", "prompts", "paused", "error"],
 	image_gen: ["image_gen", "qa", "paused", "error"],
 	qa: ["repair", "build", "paused", "error"],
-	repair: ["image_gen", "build", "paused", "error"],
+	repair: ["qa", "image_gen", "build", "paused", "error"],
 	build: ["final_gate", "done", "paused", "error"],
 	final_gate: ["done", "build", "image_gen", "paused", "error"],
 	export: ["done"],
