@@ -55,8 +55,6 @@ export function render(snapshot, { onImageClick }) {
 	const images = [];
 
 	const pages = snapshot.pages || [];
-	const totalPanels = pages.reduce((sum, page) => sum + (page.panels || []).length, 0);
-	let panelNumber = 0;
 	if (!pages.length) showEmpty("grid", "尚无分镜页面。运行 /manga next 推进流水线。");
 	for (const page of pages) {
 		const section = document.createElement("section");
@@ -67,19 +65,19 @@ export function render(snapshot, { onImageClick }) {
 		const panels = document.createElement("div");
 		panels.className = "panels";
 
-		for (const panel of page.panels || []) {
-			panelNumber += 1;
+		for (const [panelIndex, panel] of (page.panels || []).entries()) {
+			const label = `${page.index}/${panelIndex + 1}`;
 			const card = document.createElement("figure");
 			card.className = `panel ${panel.status === "failed" ? "failed" : panel.version > 0 ? "" : "pending"}`;
 			card.dataset.panel = panel.file;
-			card.title = `${panelNumber}/${totalPanels} · ${page.id}/${panel.id}`;
+			card.title = `${label} · ${page.id}/${panel.id}`;
 			card.setAttribute("aria-label", card.title);
 
-			// Number every panel (including pending ones) so the number matches the
-			// page/panel order and users can find the right /manga regen target.
+			// Show page number / panel number within that page (not a global total),
+			// so the badge maps directly to page-XXX/panel-XX for /manga regen.
 			const index = document.createElement("span");
 			index.className = "panel-index";
-			index.textContent = `${panelNumber}/${totalPanels}`;
+			index.textContent = label;
 			index.title = `${page.id}/${panel.id}`;
 			card.append(index);
 
@@ -92,7 +90,7 @@ export function render(snapshot, { onImageClick }) {
 				img.src = mediaUrl(snapshot.slug, panel.file, panel.version);
 				card.append(img);
 				const imageIndex = images.length;
-				images.push({ src: img.src, alt: `${img.alt}（${panelNumber}/${totalPanels}）` });
+				images.push({ src: img.src, alt: `${img.alt}（第 ${label} 格）` });
 				activate(card, `查看 ${img.alt}`, () => onImageClick(imageIndex));
 			}
 			panels.append(card);
