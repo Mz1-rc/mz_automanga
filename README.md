@@ -72,6 +72,8 @@ cp -R /root/mz_automanga/extensions /root/mz_automanga/src /root/mz_automanga/pr
 /manga web start --port 45871   # 默认绑定 0.0.0.0，只读、无鉴权
 ```
 
+不带 `--title` 的剧本文件会在创建项目时读取前 1600 字生成临时标题；剧本分析完成后，自动标题会替换为分析师基于全文内容给出的 `titleSuggestion`。目录输入默认使用目录名，显式书名始终优先。
+
 典型流程：
 
 ```
@@ -82,7 +84,7 @@ init
  → cast（角色设计师写立绘提示词）
  → character_images（生成角色立绘）
  → [cast_gate]
- → storyboard（逐页分镜，对白 ≤2 条/格、≤14 汉字）
+ → storyboard（逐页分镜，对白 ≤2 条/格；文字长度不设硬上限）
  → [storyboard_gate]（出图前确认）
  → prompts（提示词美术把对白转成 lettering 指令）
  → image_gen（逐格串行出图）
@@ -92,6 +94,8 @@ init
 ```
 
 方括号为人工闸门。`/manga auto on` 可跳过闸门（仍做校验），`/manga run-all` 跑到结束。
+
+分镜阶段会先用场景数、节拍数和原文篇幅生成全篇页计划：即使分析师把 `pageEstimate` 估得过高，也会收紧到内容能支撑的页数，并把每页限定到独立的节拍区间，避免后半段用“回响/重放/总结”页重复剧情。
 
 ## 命令
 
@@ -199,7 +203,7 @@ no watermark, no signature, no text other than the specified lettering
 - 纯空镜 = 无角色且无对白/旁白/心理活动的格子。
 - 每页最多 1 个纯空镜，禁止连续两格纯空镜；超限会触发分镜校验重试。
 - 纯空镜必须承担转场/时间/情绪变化，并补一条 `narration` 或 `thought`。
-- 原文只有景物描写时，优先补角色反应、心理活动或说明性旁白；旁白 ≤20 汉字，心理活动按对白 ≤14 汉字。
+- 原文只有景物描写时，优先补角色反应、心理活动或说明性旁白；旁白与对话不再限定字数，长句可按原文顺序拆成多条气泡。
 - QA 会报告纯空镜与连续空镜，便于在出图前复查。
 
 ## API Key
@@ -221,7 +225,7 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
 - **框架层只读**：HTTP 方法白名单仅允许 `GET`/`HEAD`，其他方法在路由前直接返回 405 与 `Allow: GET, HEAD`；页面只提供项目选择、漫画网格、**角色人设图**、单页阅读，没有写接口、不叠加气泡（文字已在 PNG 里）。
 - 媒体地址为 `/media/<项目 slug>/<项目相对路径>`，中文 slug 与文件名会正确 URL 编码；页面快照中的路径自带 `pages/` 前缀。
 - **Web 预览图会压缩到 500,000 字节以下**：`/manga web start` 前自动在 `.web/` 生成缓存；新出图也会自动生成。HTTP 服务只读取压缩缓存，不在请求中写文件。
-- 页面网格已加大，漫画按页展示更大的画面，点击可继续放大阅读；人设图同样适配页面宽度。
+- 页面网格已加大，漫画按页展示更大的画面，点击可继续放大阅读；每格左上角显示全局编号 `x/x`，悬停/标题可看到 `page-xxx/panel-xx`，方便 `/manga regen` 定位。人设图同样适配页面宽度。
 - **移动端适配**：`viewport-fit=cover` + 安全区变量；≤720px 顶栏分两行、触控目标 ≥44px；漫画网格按宽度降为 2 列/单列；阅读器支持左右滑动切换与移动端底部按钮。前端按 ES modules + 分文件 CSS 组织（`assets/js/*`、`assets/css/*`），无构建步骤。
 - 图片直接流式返回，支持 Range/ETag；服务端不缓存图片字节。
 
@@ -296,7 +300,7 @@ Ark 内置可选模型：`doubao-seedream-5-5-261028`（默认）、`doubao-seed
 ## 测试
 
 ```bash
-node --experimental-strip-types --test tests/*.test.ts   # 57 个用例
+node --experimental-strip-types --test tests/*.test.ts   # 59 个用例
 ```
 
 测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering/空镜校验、改编等级与提示词注入、黑白画风颜色锁与灰度兜底、Agnes/Ark 重试与流式下载上限、图片压缩到 <500 KB、Web 只读方法白名单/默认 0.0.0.0/SSE/Range/中文路径/人设图、ZIP/CBZ 导出、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过、图像模块 provider/workspace 解耦、Ark payload/尺寸映射、模型选择与状态显示、错误分层。

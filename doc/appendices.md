@@ -72,7 +72,7 @@
 ## 硬性
 - 每页 3–6 格；第一页第一格是建立镜头。
 - characters[].id 必须在 bible.cast 中；outfit 必须在 outfits 中。
-- 每格 ≤2 条对白，每条 ≤14 字（中文）。
+- 每格 ≤2 条对白；文字不设硬性字数上限，长内容按原文顺序拆成多条气泡。
 - 不写 prompt / refs / 图像字段。
 - 上一页文件只用于衔接，不要修改。
 ```
@@ -92,7 +92,7 @@ Avoid: garbled characters, misspelled characters, extra text, watermark, signatu
 - 每个 dialogue 一条气泡；prompt 中必须出现原文（含标点），用英文双引号包住。
 - 写明气泡位置（top-left/top-right/bottom-left/bottom-right/center）、形状（rounded/spiky/cloud/box）、
   尾巴指向、文字颜色与字体风格。
-- 每条 ≤14 汉字；超长不要删字，报告校验错误让分镜拆格。
+- 每条 `dialogue.text` 必须完整进入 lettering；不设硬性字数上限，也不要删字或改写。
 
 ## 参考图
 prompt 开头用英文逐条说明每张参考图的作用；refs 顺序与说明一致。

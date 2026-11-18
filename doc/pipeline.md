@@ -146,8 +146,9 @@ export async function runRole(options: RoleRunOptions): Promise<RoleRunResult> {
 ## 本次任务
 - 只写 pages/page-003.json
 - 每页 3–6 格；首格建立镜头
-- 每格 ≤2 条对白，每条 ≤14 汉字；每条必须写 `bubble.position/shape/tail`
-- 超长对白必须拆格或精简，不得丢失关键信息
+- 每格 ≤2 条对白；文字不设硬性字数上限；每条必须写 `bubble.position/shape/tail`
+- 长对白按原文顺序拆到下一格，不得删改或丢失关键信息
+- 分镜前生成全篇页计划，按场景/节拍/原文篇幅收紧页数，并把本页限定到独立节拍区间，禁止回顾/重放页
 - 不写图像提示词
 ## 输出契约
 - 允许目标：pages/page-003.json

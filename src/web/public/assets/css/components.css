@@ -16,6 +16,26 @@
 	background: #000;
 }
 
+.panel-index {
+	position: absolute;
+	top: 8px;
+	left: 8px;
+	z-index: 2;
+	padding: 2px 8px;
+	color: var(--text);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	line-height: 1.5;
+	background: rgba(15, 16, 18, 0.78);
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	pointer-events: none;
+}
+
+.panel.failed .panel-index {
+	color: var(--danger);
+}
+
 .panel.pending img,
 .panel.failed img {
 	display: none;

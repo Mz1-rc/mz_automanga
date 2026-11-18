@@ -97,7 +97,7 @@ no watermark, no signature, no text other than the specified lettering
 | 剧本澄清 | 优先逐条回答；可“按假设继续”；答案写入 `clarifications.md` |
 | 画风 | `init` 时选择；默认 `manga-bw`、`3:4` |
 | 改编等级 | `init` 时选择；未选择时首次剧本分析前询问；非交互默认 `balanced` |
-| 页/格 | 每页 3–6 格；每格 ≤2 个气泡、每条 ≤14 汉字 |
+| 页/格 | 每页 3–6 格；每格 ≤2 个气泡；文字不设硬性字数上限 |
 | 剧本输入 | `--script <文件|目录>`；目录递归读取 `.md/.markdown/.txt/.text`，按自然顺序合并；不再接受粘贴/命令行正文 |
 | 工作区 | `<cwd>/.automanga/` |
 | 模型 | 跟随宿主当前模型；可用 `/manga models` 逐角色覆盖 |
@@ -106,6 +106,6 @@ no watermark, no signature, no text other than the specified lettering
 | Web | 只读，只显示图片；默认 `0.0.0.0`；无 token/鉴权；网格 + 人设 + 单页阅读；预览图 <500,000 字节；`start/stop/status/restart`；端口必须手动指定，不随机 |
 | 最终打包 | 默认 `exports/<slug>.zip`（仅图片普通 ZIP）；`--cbz` 导出 `.cbz` |
 
-若实现中发现这些默认值与 Agnes 的实际文字能力冲突（例如 14 字经常糊），我会先停下来用实测结果向你报告，而不是静默改设计。
+若实现中发现这些默认值与 Agnes 的实际文字能力冲突（例如长气泡经常糊），我会先停下来用实测结果向你报告，而不是静默改设计。
 
 ---

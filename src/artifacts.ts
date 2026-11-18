@@ -206,10 +206,6 @@ export function validatePage(
 		for (const [di, line] of dialogue.entries()) {
 			if (!DIALOGUE_TYPES.has(line.type)) issues.push(`${label} dialogue[${di}] 的 type 非法`);
 			if (!line.text?.trim()) issues.push(`${label} dialogue[${di}] 的 text 为空`);
-			const limit = line.type === "narration" ? 20 : 14;
-			if (countChars(line.text ?? "") > limit) {
-				issues.push(`${label} dialogue[${di}] 超过 ${limit} 字（当前 ${countChars(line.text ?? "")}），请拆格或精简`);
-			}
 			if (!line.bubble || !POSITIONS.has(line.bubble.position)) issues.push(`${label} dialogue[${di}] 缺少合法的 bubble.position`);
 			if (!line.bubble || !SHAPES.has(line.bubble.shape)) issues.push(`${label} dialogue[${di}] 缺少合法的 bubble.shape`);
 		}

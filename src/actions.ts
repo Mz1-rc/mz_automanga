@@ -176,11 +176,14 @@ export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput)
 	const script = scriptInput.text;
 
 	let title = input.title?.trim();
+	let titleSource: "user" | "auto" | "directory" | undefined = title ? "user" : undefined;
 	if (!title && scriptInput.fromDirectory) {
 		title = basename(absPath);
+		titleSource = "directory";
 	}
 	if (!title && ctx.hasUI) {
-		title = (await ctx.ui.input("书名（可留空，自动从剧本取名）", ""))?.trim();
+		title = (await ctx.ui.input("书名（可留空，自动根据剧本内容取名）", ""))?.trim();
+		titleSource = title ? "user" : "auto";
 	}
 
 	const config = app.baseConfig();
@@ -225,7 +228,7 @@ export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput)
 		adaptation = adaptationFromValue(choice);
 	}
 
-	const { store } = app.create(ctx.cwd, { title, style, adaptation, script });
+	const { store } = app.create(ctx.cwd, { title, titleSource, style, adaptation, script });
 	writeJsonAtomic(join(store.root, "source", "inputs.json"), {
 		inputPath: absPath,
 		fromDirectory: scriptInput.fromDirectory,

@@ -128,7 +128,7 @@ test("validateBible requires locked tokens and character fields", () => {
 	assert.ok(result.issues.some((issue) => issue.includes("canonical 过短")));
 });
 
-test("validatePage enforces bubble, dialogue length and lettering text", () => {
+test("validatePage enforces bubble and lettering text without a character limit", () => {
 	const { store } = makeTestProject();
 	mkdirSync(join(store.root, "characters", "lin"), { recursive: true });
 	writeFileSync(join(store.root, "characters", "lin", "ref.png"), tinyPng());
@@ -143,10 +143,11 @@ test("validatePage enforces bubble, dialogue length and lettering text", () => {
 	assert.ok(badBubble.issues.some((issue) => issue.includes("bubble.position")));
 
 	const long = page(false);
-	long.panels[0].dialogue[0].text = "这是一句明显超过十四个汉字的对白内容";
-	const badLong = validatePage(long, { bible: bible(), stylePrompt: "", stage: "storyboard", projectRoot: store.root });
-	assert.equal(badLong.ok, false);
-	assert.ok(badLong.issues.some((issue) => issue.includes("14 字")));
+	long.panels[0].dialogue[0].text = "这是一句明显超过十四个汉字的对白内容，但旁白和对话不再限制字数。";
+	assert.equal(
+		validatePage(long, { bible: bible(), stylePrompt: "", stage: "storyboard", projectRoot: store.root }).ok,
+		true,
+	);
 
 	const good = page(true);
 	assert.equal(

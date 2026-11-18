@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { composeStylePrompt, LETTERING_STYLE, type MangaConfig } from "./config.ts";
-import { fileExists, readJson } from "./paths.ts";
+import { countChars, fileExists, readJson } from "./paths.ts";
 import { ADAPTATION_INFO, type Bible, type MangaPage, type MangaProject, type RoleId, type ScriptAnalysis } from "./types.ts";
-import { countChars } from "./paths.ts";
+import type { StoryboardPlan } from "./page-plan.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = join(HERE, "..", "prompts");
@@ -32,6 +32,7 @@ export interface TaskPromptOptions {
 	feedback?: string;
 	extraInstruction?: string;
 	repairTargets?: string[];
+	storyboardPlan?: StoryboardPlan;
 }
 
 function adaptationOf(project: MangaProject) {
@@ -77,7 +78,7 @@ function factLines(project: MangaProject, options: TaskPromptOptions): string[] 
 		`- 预计页数：${analysis?.pageEstimate ?? "未定"}`,
 		`- 角色数：${bible?.cast?.length ?? 0}`,
 		`- 当前页：${options.pageId ?? "无"}`,
-		`- 每页 3–6 格；每格 ≤2 条对白；每条 ≤14 汉字（旁白 ≤20 字）`,
+		`- 每页 3–6 格；每格 ≤2 条对白；文字不设硬性字数上限，长旁白/对白可拆成多条`,
 		`- 禁止水印、签名；除指定气泡外不要出现其他文字`,
 	].map((line) => line.replace(/\n/g, " "));
 }
@@ -189,7 +190,7 @@ function schemaPage(): string {
       "characters": [{ "id": "cast-id", "outfit": "default", "pose": "string", "expression": "string", "focus": "primary | secondary" }],
       "action": "string", "background": "string", "lighting": "string", "mood": "string", "composition": "string",
       "dialogue": [
-        { "type": "speech | thought | narration | sfx", "speaker": "cast-id", "text": "≤14 汉字（旁白 ≤20）",
+        { "type": "speech | thought | narration | sfx", "speaker": "cast-id", "text": "文字不设硬性字数上限",
           "emotion": "string", "bubble": { "position": "top-left | top-right | bottom-left | bottom-right | center",
           "shape": "rounded | spiky | cloud | box", "tail": "bottom-right", "size": "small | medium | large" } }
       ],
@@ -233,6 +234,8 @@ function roleTask(options: TaskPromptOptions): string {
 				"5. 不要向用户提问。把问题写进 issues；用户回答后会重新运行你。",
 				"6. source/analysis.json 和 source/scenes.json 都要保存；scenes.json 是 analysis.scenes 的独立副本，内容为数组。",
 				"7. 按任务事实中的改编等级处理剧本；等级越高，越可以补写过渡、旁白与心理活动。",
+				"8. pageEstimate 必须按实际可画内容估算：通常每页承载 3–6 个节拍，约对应 120–180 字原文；不要为了长场面虚报页数，后续分镜会按场景数、节拍数和原文篇幅收紧。",
+				"9. 不要用“回顾/重放/回响/总结”这类重复剧情的页来凑页数；拆场景时保证每个场景都有新信息。",
 				"",
 				...adaptationRules(project),
 				"",
@@ -286,24 +289,44 @@ function roleTask(options: TaskPromptOptions): string {
 		case "storyboard": {
 			const index = pageIndex ?? 1;
 			const id = pageId ?? `page-${String(index).padStart(3, "0")}`;
+			const plan = options.storyboardPlan;
+			const entry = plan?.pages.find((page) => page.index === index);
+			const previous = plan?.pages.find((page) => page.index === index - 1);
+			const next = plan?.pages.find((page) => page.index === index + 1);
+			const planLines = plan && entry
+				? [
+					"",
+					"## 全篇分镜计划（硬约束）",
+					`- 计划总页数：${plan.totalPages}（分析建议 ${plan.requestedPages} 页；本计划已按场景与原文篇幅收紧）`,
+					`- 本页：${entry.index}/${plan.totalPages}，必须写作 ${entry.id}.json`,
+					`- 本页覆盖场景：${entry.sceneTitles.length ? entry.sceneTitles.map((title, i) => `${entry.sceneIds[i]}「${title}」`).join("、") : "无"}`,
+					`- 本页负责的节拍（${entry.beatStart}–${entry.beatEnd} / 共 ${entry.totalBeats} 条，按顺序推进）：`,
+					...entry.beats.map((beat, i) => `  ${i + 1}. ${beat}`),
+					previous ? `- 上一页已覆盖到节拍 ${previous.beatEnd}；只做必要衔接，不得回顾或重画。` : "- 这是第一页，先建立地点、时间与人物位置。",
+					next ? `- 下一页将从节拍 ${next.beatStart} 开始；本页不要提前画后面的内容。` : "- 这是最后一页：在本页收束故事，不要另起回响/总结/重放页。",
+					"- 严禁把已经画过的剧情换一个“回响/重放/对照/蒙太奇/总结”的包装再画一遍。",
+					"- 本页节拍不足以填满 3 格时，可补角色反应、过渡或环境细节，但不得新增主线或重复已有画面。",
+				]
+				: [];
 			return [
 				`## 本次任务：分镜师（第 ${index} 页，${id}）`,
 				"1. 读取 bible.json、source/analysis.json；如需衔接，读取上一页。",
 				"2. 只为当前页写 pages/" + id + ".json，不要写其他页。",
 				"3. 每页 3–6 格；第一页第一格是建立镜头。",
 				"4. characters[].id 必须在 bible.cast 中；outfit 必须是该角色 outfits 的键。",
-				"5. 每格 ≤2 条对白；每条 ≤14 汉字（旁白 ≤20）；每条必须给出 bubble.position/shape/tail。",
-				"6. 超长对白必须拆格或精简，不得丢失关键信息。",
+				"5. 每格 ≤2 条对白；文字不设硬性字数上限，较长内容可拆成多条气泡；每条必须给出 bubble.position/shape/tail。",
+				"6. 一条台词需要拆格时，按原文顺序拆开，不得删改或丢失关键信息。",
 				"7. narration/thought 也要作为 dialogue 写入，并给出 bubble（旁白可用 box，心理活动用 cloud）；后续会画进图里。",
 				"8. 不要写 prompt / refs / image 字段（留给提示词美术与出图阶段）；image.status 写 pending。",
+				...planLines,
 				"",
 				...adaptationRules(project),
 				"",
 				"## 空镜与文字（重点）",
 				"- 纯空镜 = characters 为空且 dialogue 为空；每页最多 1 个纯空镜，禁止连续两格纯空镜。",
-				"- 纯空镜必须承担转场/时间/情绪变化，并补 1 条 narration 或 thought；旁白 ≤20 汉字，心理活动按对白 ≤14 汉字。",
+				"- 纯空镜必须承担转场/时间/情绪变化，并补 1 条 narration 或 thought。",
 				"- 原文只有景物描写时，优先补角色反应、心理活动或说明性旁白，再决定要不要空镜。",
-				"- 尽量避免整页无字；动作/反应格可用简短旁白或心理活动补足信息，但不得改写关键事实。",
+				"- 尽量避免整页无字；动作/反应格可用旁白或心理活动补足信息，但不得改写关键事实。",
 				"",
 				"## 输出契约",
 				"```json",
@@ -319,7 +342,7 @@ function roleTask(options: TaskPromptOptions): string {
 				"2. 读取后原样保留剧情、分镜、对白；只补全每格的 promptCore / refs / lettering / prompt / negative。narration/thought 同样必须生成 lettering，不要遗漏。",
 				"3. 拼接顺序：shot + camera → 角色 canonical + outfit + pose + expression → action → 场景/时间 → 光线 → 构图与留白 → Lettering → stylePrompt（逐字）→ Avoid 句。",
 				"4. Lettering 必须逐字包含每条 dialogue.text（含标点），并写明气泡位置、形状、尾巴指向、文字颜色与字体风格。",
-				`5. 每条文字 ≤14 汉字；超长不要删字，直接报告校验错误。`,
+				"5. 文字不设硬性字数上限；每条 dialogue.text 都必须完整进入 lettering，不得删字或改写。",
 				"6. prompt 末尾必须出现：no text other than the specified lettering。",
 				"7. refs 只列角色立绘（按 cast 顺序）。上一格/连续性参考由出图阶段自动追加，不要写进 refs。参考图说明写在 prompt 开头。",
 				"8. 不要修改 characters、dialogue、image 以外无关字段；promptOverride 保持不变。",
@@ -336,7 +359,7 @@ function roleTask(options: TaskPromptOptions): string {
 			return [
 				"## 本次任务：审校",
 				"1. 读取 pages/*.json 与 bible.json。",
-				"2. 检查：每页 3–6 格、角色 id 存在、对白 ≤2 条且 ≤14 字、每格有 bubble、每格 prompt 包含全部对白原文与 lettering 锁定词、refs 文件存在；统计纯空镜是否连续或过多，并建议补旁白/心理活动。",
+				"2. 检查：每页 3–6 格、角色 id 存在、每格对白 ≤2 条、每格有 bubble、每格 prompt 包含全部对白原文与 lettering 锁定词、refs 文件存在；统计纯空镜是否连续或过多，并建议补旁白/心理活动。",
 				"3. 不修改页面文件，只写 qa/report.json 与 qa/report.md。",
 				"4. repairTargets 只列出确实需要重画/改提示词的格子。",
 				pages,

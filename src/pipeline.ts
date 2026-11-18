@@ -4,6 +4,7 @@ import { ImageGenError, generateCharacterImages, generatePanelImages, regenerate
 import { createProjectImageWorkspace, createProviderFromConfig } from "./imagegen-adapter.ts";
 import { validatePage, validateRefImages, validateRoleOutputs, roleTargets } from "./artifacts.ts";
 import { composeStylePrompt, type MangaConfig } from "./config.ts";
+import { buildStoryboardPlan } from "./page-plan.ts";
 import { resolveProviderKey } from "./keys.ts";
 import { readJson, readText, resolveWithin, writeAtomic, writeJsonAtomic, ensureDir, fileExists, nowIso } from "./paths.ts";
 import { ensureProjectWebPreviews } from "./previews.ts";
@@ -12,7 +13,7 @@ import type { ImageArchiveFormat } from "./export.ts";
 import { phaseLabel } from "./ui.ts";
 import { recordAssumptions, runReviewGate, runScriptGate as runScriptGateUi, questionsNeedingUser, gatePolicy } from "./gates.ts";
 import type { GateUi } from "./gates.ts";
-import type { ProjectStore } from "./state.ts";
+import { isAutoTitle, normalizeTitle, type ProjectStore } from "./state.ts";
 import type {
 	AdaptationLevel,
 	Bible,
@@ -291,6 +292,7 @@ export class MangaPipeline {
 			if (!result.ok) return;
 			const analysis = this.store.readAnalysis();
 			if (!analysis) throw new Error("analysis.json 读取失败");
+			this.adoptAnalysisTitle(analysis);
 			this.store.state.pendingQuestions = analysis.issues ?? [];
 			this.store.saveState();
 			const policy = gatePolicy(this.project, "script");
@@ -312,6 +314,18 @@ export class MangaPipeline {
 			}
 			this.ui.updateStatus(this.store);
 		});
+	}
+
+	/** Replace the bounded fallback title with the analyst's content-based suggestion. */
+	private adoptAnalysisTitle(analysis: ScriptAnalysis): void {
+		if (!isAutoTitle(this.project, this.store.readScript())) return;
+		const suggestion = normalizeTitle(analysis.titleSuggestion ?? "");
+		if (!suggestion || suggestion === this.project.title) return;
+		const previous = this.project.title;
+		this.project.title = suggestion;
+		this.project.titleSource = "auto";
+		this.store.saveProject();
+		this.ui.notify(`已根据剧本内容生成书名《${suggestion}》（原临时标题《${previous}》）。`, "info");
 	}
 
 	private async runScriptGate(): Promise<void> {
@@ -442,7 +456,14 @@ export class MangaPipeline {
 		await this.locked("storyboard", async () => {
 			const analysis = this.store.readAnalysis();
 			if (!analysis) throw new Error("找不到 analysis.json，无法分镜");
-			const total = Math.max(1, Math.min(analysis.pageEstimate, 40));
+			const plan = buildStoryboardPlan(analysis, this.store.readScript());
+			const total = plan.totalPages;
+			if (total < plan.requestedPages) {
+				this.ui.notify(
+					`分镜页数按场景/节拍/原文篇幅收紧为 ${total} 页（分析建议 ${plan.requestedPages} 页），避免为凑页数重复剧情。`,
+					"info",
+				);
+			}
 			const fb = feedback ?? this.takeFeedback();
 			let completed = 0;
 			for (let index = 1; index <= total; index++) {
@@ -454,12 +475,13 @@ export class MangaPipeline {
 					completed++;
 					continue;
 				}
-				this.report(`分镜 ${pageId}`, { step: index, total });
+				this.report(`分镜 ${pageId}（${index}/${total}）`, { step: index, total });
 				const result = await this.runRoleWithRetry("storyboard", {
 					pageIndex: index,
 					pageId,
 					targets: [`pages/${pageId}.json`],
 					feedback: fb,
+					storyboardPlan: plan,
 				});
 				if (!result.ok) return;
 				completed++;
@@ -850,6 +872,7 @@ export class MangaPipeline {
 			pageId?: string;
 			feedback?: string;
 			repairTargets?: string[];
+			storyboardPlan?: ReturnType<typeof buildStoryboardPlan>;
 			compact?: boolean;
 		},
 	): Promise<{ ok: boolean; issues: string[] }> {
@@ -876,6 +899,7 @@ export class MangaPipeline {
 				feedback: options.feedback,
 				extraInstruction,
 				repairTargets: options.repairTargets,
+				storyboardPlan: options.storyboardPlan,
 			});
 			writeAtomic(join(runDir, "prompt.md"), `# SYSTEM\n\n${systemPrompt}\n\n# TASK\n\n${taskPrompt}\n`);
 			writeJsonAtomic(join(runDir, "meta.json"), {

@@ -166,10 +166,14 @@ export interface MangaConfig {
 	memory: MemoryConfig;
 }
 
+export type ProjectTitleSource = "user" | "auto" | "directory";
+
 export interface MangaProject {
 	schemaVersion: 1;
 	slug: string;
 	title: string;
+	/** How the title was chosen. Auto titles may be replaced by the analysis suggestion. */
+	titleSource?: ProjectTitleSource;
 	createdAt: string;
 	updatedAt: string;
 	language: string;

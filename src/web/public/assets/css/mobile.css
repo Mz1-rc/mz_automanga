@@ -1,6 +1,12 @@
 /* Mobile and touch-specific overrides. Loaded after layout/components. */
 
 @media (max-width: 720px) {
+	.panel-index {
+		top: 6px;
+		left: 6px;
+		padding: 1px 7px;
+		font-size: 11px;
+	}
 	.tab {
 		padding: 6px 12px;
 	}

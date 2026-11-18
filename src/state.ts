@@ -2,6 +2,7 @@ import { existsSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { projectsRoot, workspaceRoot, type MangaConfig } from "./config.ts";
 import {
+	countChars,
 	ensureDir,
 	fileExists,
 	fileStat,
@@ -25,6 +26,7 @@ import type {
 	Phase,
 	ProjectState,
 	ProjectStats,
+	ProjectTitleSource,
 	RoleId,
 	RunRecord,
 	StyleSelection,
@@ -450,6 +452,8 @@ export function listProjects(cwd: string, config: MangaConfig): ProjectSummary[]
 
 export interface CreateProjectInput {
 	title?: string;
+	/** Whether the title came from the user, a directory name, or the script itself. */
+	titleSource?: ProjectTitleSource;
 	style: StyleSelection;
 	adaptation?: AdaptationLevel;
 	script: string;
@@ -459,7 +463,9 @@ export interface CreateProjectInput {
 export function createProject(cwd: string, input: CreateProjectInput): ProjectStore {
 	const script = input.script.trim();
 	if (!script) throw new Error("剧本为空，无法创建项目");
-	const title = (input.title ?? "").trim() || deriveTitle(script);
+	const explicitTitle = (input.title ?? "").trim();
+	const title = explicitTitle || deriveTitle(script);
+	const titleSource = input.titleSource ?? (explicitTitle ? "user" : "auto");
 	const root = projectsRoot(cwd, input.config);
 	ensureDir(root);
 	let slug = slugify(title);
@@ -477,6 +483,7 @@ export function createProject(cwd: string, input: CreateProjectInput): ProjectSt
 		schemaVersion: 1,
 		slug,
 		title,
+		titleSource,
 		createdAt: now,
 		updatedAt: now,
 		language: "zh",
@@ -500,13 +507,64 @@ export function createProject(cwd: string, input: CreateProjectInput): ProjectSt
 	return store;
 }
 
-function deriveTitle(script: string): string {
+/** Only this much text is inspected when creating an automatic title. */
+export const AUTO_TITLE_PREVIEW_CHARS = 1600;
+export const AUTO_TITLE_MAX_CHARS = 40;
+
+/** Strip markdown/labels and keep the title to a single readable line. */
+export function normalizeTitle(input: string): string {
+	const line = input
+		.replace(/\r?\n.*/s, " ")
+		.replace(/^#+\s*/, "")
+		.replace(/^(?:标题|书名|作品名|title)\s*[:：]\s*/i, "")
+		.replace(/[\s"“”'‘’《》]+$/g, "")
+		.replace(/^[\s"“”'‘’]+/g, "")
+		.replace(/\s+/g, " ")
+		.trim();
+	return Array.from(line).slice(0, AUTO_TITLE_MAX_CHARS).join("").trim();
+}
+
+/**
+ * Pick a preliminary title from a bounded preview of the script. The script
+ * analyst's titleSuggestion replaces it after analysis, so this only needs to
+ * be good enough for the project list and slug.
+ */
+export function deriveTitle(script: string): string {
+	const preview = script.slice(0, AUTO_TITLE_PREVIEW_CHARS);
+	const lines = preview
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean);
+	if (lines.length === 0) return `漫画-${Date.now().toString(36)}`;
+
+	const heading = lines.find((line) => /^#{1,6}\s+\S/.test(line));
+	if (heading) return normalizeTitle(heading);
+
+	const labeled = lines.find((line) => /^(?:标题|书名|作品名|title)\s*[:：]/i.test(line));
+	if (labeled) return normalizeTitle(labeled);
+
+	// A short standalone line near the top is usually a title or chapter name.
+	const shortLine = lines
+		.slice(0, 12)
+		.find((line) => countChars(line) >= 2 && countChars(line) <= 24 && !/[。！？!?；;]$/.test(line));
+	if (shortLine) return normalizeTitle(shortLine);
+
+	const firstSentence = lines[0].split(/(?<=[。！？!?])/)[0] ?? lines[0];
+	return normalizeTitle(firstSentence) || `漫画-${Date.now().toString(36)}`;
+}
+
+/** Existing projects without titleSource keep a title that equals the fallback. */
+export function isAutoTitle(project: MangaProject, script: string): boolean {
+	if (project.titleSource) return project.titleSource === "auto";
+	if (project.title === deriveTitle(script)) return true;
+	// Titles created by older versions were the first non-empty line, truncated
+	// to 32 characters. Treat them as automatic so the next analysis can improve
+	// the title without overriding an explicitly chosen one.
 	const firstLine = script
 		.split("\n")
 		.map((line) => line.trim())
 		.find((line) => line.length > 0);
-	if (!firstLine) return `漫画-${Date.now().toString(36)}`;
-	return firstLine.replace(/^#+\s*/, "").slice(0, 32);
+	return Boolean(firstLine) && project.title === firstLine.replace(/^#+\s*/, "").slice(0, 32);
 }
 
 export function workspaceLabel(cwd: string, config: MangaConfig): string {

@@ -1,6 +1,6 @@
 import { loadGlobalConfig, projectConfig, type MangaConfig } from "./config.ts";
 import { createProject, listProjects, ProjectStore, type ProjectSummary } from "./state.ts";
-import type { AdaptationLevel, RunStatus, StyleSelection } from "./types.ts";
+import type { AdaptationLevel, ProjectTitleSource, RunStatus, StyleSelection } from "./types.ts";
 
 export interface BackgroundJob {
 	label: string;
@@ -42,9 +42,22 @@ export class MangaApp {
 		return listProjects(cwd, this.baseConfig());
 	}
 
-	create(cwd: string, input: { title?: string; style: StyleSelection; adaptation?: AdaptationLevel; script: string }): { store: ProjectStore; config: MangaConfig } {
+	create(cwd: string, input: {
+		title?: string;
+		titleSource?: ProjectTitleSource;
+		style: StyleSelection;
+		adaptation?: AdaptationLevel;
+		script: string;
+	}): { store: ProjectStore; config: MangaConfig } {
 		const config = this.baseConfig();
-		const store = createProject(cwd, { title: input.title, style: input.style, adaptation: input.adaptation, script: input.script, config });
+		const store = createProject(cwd, {
+			title: input.title,
+			titleSource: input.titleSource,
+			style: input.style,
+			adaptation: input.adaptation,
+			script: input.script,
+			config,
+		});
 		this.active = store;
 		return { store, config: this.configFor(cwd, store) };
 	}

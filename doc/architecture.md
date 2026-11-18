@@ -22,7 +22,7 @@
 
 状态全部落地为普通文件（JSON + PNG），Web 直接读文件。pi 重启、会话切换、手动改文件都不会丢状态。
 
-> 文字进图是有意的取舍：成图即可直接阅读、脱离 Web 也能用；代价是中文渲染质量依赖图像模型，因此对气泡数量、字数、字号和位置都做了硬性约束，并提供单格重生成。见 [§2.5](architecture.md)。
+> 文字进图是有意的取舍：成图即可直接阅读、脱离 Web 也能用；代价是中文渲染质量依赖图像模型，因此对气泡数量、字号和位置做了约束，并提供单格重生成；文字长度由分镜按可读性拆分。见 [§2.5](architecture.md)。
 
 ---
 
@@ -166,7 +166,7 @@ correct; no extra characters, no watermark.
 ```
 
 - 为降低中文渲染失败率，硬性约束：
-  - 每格最多 2 个气泡；每条文字 ≤ 14 个汉字（旁白 ≤ 20 字），超长必须拆格或改写。
+  - 每格最多 2 个气泡；旁白与对白不设硬性字数上限，长内容按原文顺序拆成多条气泡，不得删改关键信息。
   - 气泡位置、形状、尾巴方向、阅读顺序都显式写出，不用“适当位置”这类模糊描述。
   - 只用一种字体风格描述（如 clean black comic lettering），不混用多种字体。
   - 拟声词（`sfx`）作为画面元素描述，不算气泡。
@@ -221,7 +221,7 @@ garbled characters, misspelled characters, extra text, watermark, signature, blu
 | 8 | 内置 mock Agnes | 全流程零成本测试 |
 | 9 | 预设画风 | 用户一次选择，后面全自动 |
 | 10 | 导出仅图片 ZIP（默认）+ CBZ + 离线 index.html | 交付方便 |
-| 11 | 文字进图 + 短句约束 | 成图可直接阅读；用字数/气泡数上限控制中文渲染失败率 |
+| 11 | 文字进图 + 气泡数约束 | 成图可直接阅读；用气泡数上限控制版面，文字长度由分镜按可读性自然拆分 |
 | 12 | 全链路流式 I/O | 小内存机器也能跑完整本 |
 
 ### 2.10 决策九：小内存优先
@@ -473,7 +473,7 @@ mz_automanga/
 | 4 | `cast` | `character_designer` | bible | `bible.json`、`ref.prompt.txt` | 每个角色有 canonical/refPrompt |
 | 5 | `character_images` | 代码 | refPrompt | `characters/<id>/ref.png` | PNG magic、尺寸、hash |
 | 6 | `cast_gate` | 宿主 UI | 立绘 + bible | 闸门记录 | 人工确认 |
-| 7 | `storyboard` | `storyboard`（逐页串行） | bible + scenes | `pages/page-XXX.json` | 3–6 格/页；角色 id 必须存在；每格 ≤2 条对白、每条 ≤14 汉字；必须写 `bubble` |
+| 7 | `storyboard` | `storyboard`（逐页串行） | bible + scenes + 全篇页计划 | `pages/page-XXX.json` | 3–6 格/页；角色 id 必须存在；每格 ≤2 条对白；必须写 `bubble`；只画本页节拍 |
 | 8 | `storyboard_gate` | 宿主 UI | 分镜 | 闸门记录 | 出图前确认 |
 | 9 | `prompts` | `prompt_artist`（逐页串行） | bible + page | 更新 page | prompt 含全部对白原文与气泡位置；refs 存在 |
 | 10 | `image_gen` | 代码 | page | PNG | cacheKey、PNG/JPEG、尺寸 |
@@ -537,7 +537,7 @@ for each issue:
 `/manga init` 的顺序：
 
 1. 剧本路径：`--script <文件|目录>`；交互模式下用 `ctx.ui.input` 询问路径。目录递归读取文本文件并按自然顺序合并。
-2. 书名（可空；目录输入默认取目录名，否则取剧本首行）。
+2. 书名（可空；目录输入默认取目录名，否则从剧本前 1600 字生成临时标题，分析完成后替换为 `titleSuggestion`）。
 3. **画风选择**（`ctx.ui.select`）：
 
 | 选项 | preset | 默认比例 | stylePrompt 骨架 |

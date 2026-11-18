@@ -6,7 +6,7 @@
 
 - 每页 3–6 格，id 合法且不重复。
 - 角色 id 在 `bible.cast` 中；outfit 合法。
-- 每格 ≤2 条对白；每条 ≤14 汉字（旁白 ≤20）。
+- 每格 ≤2 条对白；文字不设硬性字数上限。
 - 每条对白有合法 `bubble.position/shape`。
 - 每格 `prompt` 包含全部对白原文。
 - 每格 `prompt` 包含 `no text other than the specified lettering`。
