@@ -12,7 +12,7 @@
 
 | # | 你的要求 | 本版处理 |
 |---|---|---|
-| 1 | 漫画图片必须带气泡和文字 | 文字与气泡由图像模型直接画进 PNG；`prompt_artist` 负责把 `dialogue[]` 转成明确的 lettering 指令。见 [§2.5](architecture.md)、[§5.5](data-model.md)、[§8.4](image-generation.md) |
+| 1 | 漫画图片必须带气泡和文字 | 文字与气泡由图像模型直接画进 PNG；`storyboard` 负责把 `dialogue[]` 转成明确的 lettering 指令。见 [§2.5](architecture.md)、[§5.5](data-model.md)、[§8.4](image-generation.md) |
 | 2 | Web 仅显示图片，不做额外工作 | Web 缩为“项目选择 + 图片网格 + 单页阅读”，移除气泡叠加、角色页、提示词页、QA 页。见 [§9](web-preview.md) |
 | 3 | 本机内存较小，避免过大内存占用 | 新增低内存实现约束：流式下载/写入、不缓存图片、逐页会话、日志截断、出图串行。见 [§12.5](operations.md) |
 
@@ -51,7 +51,7 @@
 
 ### 实现状态（v0.1，已完成）
 
-- 已实现：`init`（含画风选择）、`script_analyst` + `script_gate`、`director`、`character_designer`、`character_images`、`cast_gate`、`storyboard`、`storyboard_gate`、`prompt_artist`（lettering）、`image_gen`、结构 QA、`repair`、`build`/CBZ、`final_gate`。
+- 已实现：`init`（含画风选择）、`script_analyst` + `script_gate`、`director`（含角色立绘提示词）、`character_images`、`cast_gate`、`storyboard`（含最终提示词/lettering）、`storyboard_gate`、`image_gen`、结构 QA、`repair`、`build`/CBZ、`final_gate`。
 - 已实现：嵌套 `AgentSession` 单飞运行器、`save_artifact` 白名单与快照、hash 缓存/续跑、Agnes 流式下载与重试、只读 Web（网格 + 单页 + 人设，默认 0.0.0.0，无 token）。
 - 预留（未实现）：视觉 QA（`qa.vision` 目前只记录，不调用视觉模型）、TUI 内真图预览、PDF 导出、Web 写操作。
 - 实测：真实模型跑通“剧本 → 分析 → 澄清 → bible → 角色 → 3 页 15 格分镜 → 15 格 lettering 提示词”；用 mock Agnes 跑通出图、QA、CBZ 与 Web（15/15 done）。

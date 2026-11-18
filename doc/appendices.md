@@ -54,12 +54,13 @@
 
 ```markdown
 ## 任务
-把剧本分析转成 bible.json：世界观、画风锁定、角色卡、场景清单。
+把剧本分析转成 bible.json：世界观、画风锁定、角色卡、场景清单，并一次写好每个角色的 refPrompt。
 
 ## 硬性
 - 角色只能来自剧本与分析；配角最多 2 个。
 - canonical 用英文，60–120 词，含年龄、性别、发型发色、瞳色、体型、默认服装、标志物。
 - art.stylePrompt = 用户选择的 stylePrompt + lockedTokens，逐字保留。
+- 每个角色必须有 refPrompt（三视图、中性灰背景、身份一致）。
 - 用户未回答的问题按 analysis.assumptions 处理，并在 bible.assumptions 中记录。
 ```
 
@@ -67,21 +68,13 @@
 
 ```markdown
 ## 任务
-按页写 pages/page-XXX.json。一次只写当前页。
+按页写 pages/page-XXX.json。一次只写当前页，并同时写完整页最终图像提示词。
 
 ## 硬性
 - 每页 3–6 格；第一页第一格是建立镜头。
 - characters[].id 必须在 bible.cast 中；outfit 必须在 outfits 中。
 - 每格 ≤2 条对白；文字不设硬性字数上限，长内容按原文顺序拆成多条气泡。
-- 不写 prompt / refs / 图像字段。
-- 上一页文件只用于衔接，不要修改。
-```
-
-`prompts/prompt_artist.md`（要点）：
-
-```markdown
-## 任务
-为当前页每格补全 prompt / negative / refs / lettering。
+- 同时补全 prompt / negative / refs / lettering；上一页文件只用于衔接，不要修改。
 
 ## 拼接顺序
 shot + camera → 角色 canonical + outfit + pose + expression → action → 场景/时间 →
@@ -96,7 +89,6 @@ Avoid: garbled characters, misspelled characters, extra text, watermark, signatu
 
 ## 参考图
 prompt 开头用英文逐条说明每张参考图的作用；refs 顺序与说明一致。
-```
 
 `prompts/editor.md` / `prompts/repairer.md`：只读校验、只改被标记格子。
 

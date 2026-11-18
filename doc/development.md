@@ -33,8 +33,8 @@
 |---|---|---|
 | M1 骨架 | package、入口、config/paths/types/state/app、`/manga init|status|help`、画风选择 | 1.5 天 |
 | M2 嵌套运行器 | `runner.ts` + `save_artifact` + 校验重试 + `script_analyst` + `script_gate` | 2 天 |
-| M3 企划与角色 | `director` + `character_designer` + `cast_gate` + 角色立绘出图 | 2 天 |
-| M4 分镜与提示词 | `storyboard`（逐页，含气泡约束）+ `prompt_artist`（lettering）+ `storyboard_gate` | 2.5 天 |
+| M3 企划与角色 | `director`（含 refPrompt）+ `cast_gate` + 角色立绘出图 | 2 天 |
+| M4 分镜与提示词 | `storyboard`（逐页，含气泡约束与 lettering）+ `storyboard_gate` | 2.5 天 |
 | M5 出图与恢复 | `image_gen`、缓存、版本、流式下载、重试、失败续跑 | 1.5 天 |
 | M6 Web | 服务端、只读方法白名单、SSE、图片网格、单页阅读（仅图片） | 1 天 |
 | M7 收尾 | QA/repair（含文字完整性）、`/manga models|doctor|rollback`、CBZ、内存测试、README | 2 天 |

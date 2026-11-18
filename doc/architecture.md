@@ -18,7 +18,7 @@
 1. **流程由代码编排，创作由子 agent 完成。** 子 agent 只产出结构化文件，不决定流程、不调用图像 API。
 2. **子 agent 是宿主进程内的嵌套会话，不是子进程。** 每个角色一个独立的 in-memory `AgentSession`，一次只跑一个，跑完 `dispose()`。
 3. **严格线性，不并行。** 嵌套会话、角色运行、图像请求全部串行，代码层三重保证（单飞任务 + 角色运行器互斥 + 工具 `executionMode: "sequential"`）。
-4. **文字和气泡直接画进图片。** `dialogue[]` 不只存元数据，还由 `prompt_artist` 转成逐字 lettering 指令交给图像模型；Web 只负责显示 PNG，不做任何叠加或编辑。
+4. **文字和气泡直接画进图片。** `dialogue[]` 不只存元数据，还由 `storyboard` 一并转成逐字 lettering 指令交给图像模型；Web 只负责显示 PNG，不做任何叠加或编辑。
 
 状态全部落地为普通文件（JSON + PNG），Web 直接读文件。pi 重启、会话切换、手动改文件都不会丢状态。
 
@@ -33,7 +33,7 @@
 - 从一份剧本生成多页、多格、角色一致的漫画。
 - 剧本形态（小说体 / 标准剧本 / 大纲 / 一句梗概）由 `script_analyst` 自行判断并拆解；发现缺失、矛盾、歧义时，**在宿主 UI 里向用户逐条确认**。
 - 角色有独立设定（外观、服装、配色、性格、口头禅、立绘参考），跨页一致。
-- 子 agent 有独立分工：剧本分析、导演、角色设计、分镜、提示词美术、审校、修复。
+- 子 agent 有独立分工：剧本分析、导演（含角色设计）、分镜（含提示词/lettering）、审校、修复。
 - 画风在创建项目时由用户选择（黑白漫画 / 全彩国漫 / 竖屏条漫 / 自定义）。
 - 提供只读 Web 预览：项目切换、漫画/人设图片网格、单页阅读、实时进度。**只显示图片，不做任何额外渲染。**
 - 默认绑定 `0.0.0.0` 以便局域网查看；无 token、无鉴权，只读边界由框架层强制（仅 `GET`/`HEAD`）。
@@ -155,7 +155,7 @@ const { session } = await createAgentSession({
 
 ### 2.5 决策五：文字与气泡画进图片
 
-- 分镜的 `dialogue[]` 保留为结构化数据（便于重生成、检索、导出字幕），但 `prompt_artist` 必须把它转成逐字 lettering 指令，交给图像模型直接画进 PNG。
+- 分镜的 `dialogue[]` 保留为结构化数据（便于重生成、检索、导出字幕），但 `storyboard` 必须把它转成逐字 lettering 指令，交给图像模型直接画进 PNG。
 - Prompt 结构固定为“画面 + Lettering 段 + 画风段 + 禁止项”，例如：
 
 ```text
@@ -275,9 +275,9 @@ garbled characters, misspelled characters, extra text, watermark, signature, blu
 阶段顺序（箭头即依赖，绝不并行）：
 
 ```
-ingest → script_analyst → [script_gate] → director → character_designer
-      → character_images → [cast_gate] → storyboard → [storyboard_gate]
-      → prompt_artist → images → qa → [repair] → build → [final_gate] → export
+ingest → script_analyst → [script_gate] → director（含角色立绘提示词）
+      → character_images → [cast_gate] → storyboard（含最终提示词/lettering）
+      → [storyboard_gate] → images → qa → [repair] → build → [final_gate] → export
 ```
 
 方括号为闸门（人工确认）。`images`、`build`、`character_images` 是代码阶段，其余是角色阶段。
@@ -357,10 +357,8 @@ mz_automanga/
 ├── prompts/
 │   ├── _common.md               # 所有角色共享的创作宪法
 │   ├── script_analyst.md
-│   ├── director.md
-│   ├── character_designer.md
-│   ├── storyboard.md
-│   ├── prompt_artist.md
+│   ├── director.md               # 企划 + 角色立绘提示词
+│   ├── storyboard.md             # 分镜 + 最终提示词 / lettering
 │   ├── editor.md
 │   └── repairer.md
 ├── tests/
@@ -453,10 +451,8 @@ mz_automanga/
 | Role ID | 中文名 | 输出 | 工具 | 阶段 |
 |---|---|---|---|---|
 | `script_analyst` | 剧本分析师 | `source/analysis.json`、`source/scenes.json` | read, save_artifact | `script_analysis` |
-| `director` | 导演 / 企划 | `bible.json` | read, save_artifact | `design` |
-| `character_designer` | 角色设计师 | `bible.json`（更新）、`characters/<id>/ref.prompt.txt` | read, save_artifact | `cast` |
-| `storyboard` | 分镜师 | `pages/page-XXX.json` | read, save_artifact | `storyboard` |
-| `prompt_artist` | 提示词美术 | `pages/page-XXX.json`（补全 prompt） | read, save_artifact | `prompts` |
+| `director` | 导演 / 企划 + 角色设计 | `bible.json`（含 `refPrompt`） | read, save_artifact | `design` |
+| `storyboard` | 分镜师（含提示词/lettering） | `pages/page-XXX.json`（含 prompt/lettering） | read, save_artifact | `storyboard` |
 | `editor` | 审校（v0.2 预留） | `qa/report.json`、`qa/report.md` | read, save_artifact | `qa`（v0.1 由代码审校） |
 | `repairer` | 修复师 | 被标记的 `pages/page-XXX.json` | read, save_artifact | `repair` |
 
@@ -469,19 +465,17 @@ mz_automanga/
 | 0 | `ingest` | 代码 | 剧本文件或目录 | `source/script.md`（目录递归合并，带文件名分隔） | 非空、hash、文件清单 |
 | 1 | `script_analysis` | `script_analyst` | script | `analysis.json`、`scenes.json` | TypeBox；scenes ≥1；issue 必须有 options/assumption |
 | 2 | `script_gate` | 宿主 UI | analysis | `clarifications.md` | 有 blocker/major 才进入 |
-| 3 | `design` | `director` | script + analysis + clarifications + style | `bible.json` | cast ≥1；stylePrompt 含 lockedTokens |
-| 4 | `cast` | `character_designer` | bible | `bible.json`、`ref.prompt.txt` | 每个角色有 canonical/refPrompt |
-| 5 | `character_images` | 代码 | refPrompt | `characters/<id>/ref.png` | PNG magic、尺寸、hash |
-| 6 | `cast_gate` | 宿主 UI | 立绘 + bible | 闸门记录 | 人工确认 |
-| 7 | `storyboard` | `storyboard`（逐页串行） | bible + scenes + 全篇页计划 | `pages/page-XXX.json` | 3–6 格/页；角色 id 必须存在；每格 ≤2 条对白；必须写 `bubble`；只画本页节拍 |
-| 8 | `storyboard_gate` | 宿主 UI | 分镜 | 闸门记录 | 出图前确认 |
-| 9 | `prompts` | `prompt_artist`（逐页串行） | bible + page | 更新 page | prompt 含全部对白原文与气泡位置；refs 存在 |
-| 10 | `image_gen` | 代码 | page | PNG | cacheKey、PNG/JPEG、尺寸 |
-| 11 | `qa` | 代码 + 可选 `editor` | 全部 | `qa/report.json` | 结构 + 视觉 |
-| 12 | `repair` | `repairer`（可选 1 轮） | qa + page | 更新目标 page | 只允许改 repairTargets |
-| 13 | `build` | 代码 | 全部 | index、默认仅图片 ZIP | 文件齐全 |
-| 14 | `final_gate` | 宿主 UI | 统计 + 预览 | 闸门记录 | 交付确认 |
-| 15 | `export` | 代码 | — | `exports/<slug>.zip`（默认）或 `.cbz` | zip 结构 |
+| 3 | `design` | `director` | script + analysis + clarifications + style | `bible.json`（含 `refPrompt`） | cast ≥1；每个角色有 canonical/refPrompt；stylePrompt 含 lockedTokens |
+| 4 | `character_images` | 代码 | refPrompt | `characters/<id>/ref.png` | PNG magic、尺寸、hash |
+| 5 | `cast_gate` | 宿主 UI | 立绘 + bible | 闸门记录 | 人工确认 |
+| 6 | `storyboard` | `storyboard`（逐页串行） | bible + scenes + 全篇页计划 | `pages/page-XXX.json`（含 prompt/lettering） | 3–6 格/页；角色 id 必须存在；每格 ≤2 条对白；必须写 `bubble`；prompt 含全部对白原文；refs 存在；只画本页节拍 |
+| 7 | `storyboard_gate` | 宿主 UI | 分镜 + 提示词 | 闸门记录 | 出图前确认 |
+| 8 | `image_gen` | 代码 | page | PNG | cacheKey、PNG/JPEG、尺寸 |
+| 9 | `qa` | 代码 + 可选 `editor` | 全部 | `qa/report.json` | 结构 + 视觉 |
+| 10 | `repair` | `repairer`（可选 1 轮） | qa + page | 更新目标 page | 只允许改 repairTargets |
+| 11 | `build` | 代码 | 全部 | index、默认仅图片 ZIP | 文件齐全 |
+| 12 | `final_gate` | 宿主 UI | 统计 + 预览 | 闸门记录 | 交付确认 |
+| 13 | `export` | 代码 | — | `exports/<slug>.zip`（默认）或 `.cbz` | zip 结构 |
 
 ### 6.3 剧本分析与澄清闸门（新增，重点）
 
@@ -577,7 +571,7 @@ no watermark, no signature, no text other than the specified lettering
 - `script_analyst`：每个 beat 必须有画面锚点；只有环境描写的节拍要补原文旁白或按改编等级补说明，不能连续留下纯空场景。
 - `storyboard`：纯空镜 = `characters` 为空且 `dialogue` 为空；每页最多 1 个，禁止连续两格；纯空镜必须补 `narration`/`thought`。
 - `validatePage` 把“每页超过 1 个纯空镜”“连续两格纯空镜”作为校验错误，促使分镜师补文字或合并；QA 同时输出纯空镜警告。
-- `narration`/`thought` 与对白一样进入 `dialogue[]`，由 `prompt_artist` 转成 lettering 画进图里。
+- `narration`/`thought` 与对白一样进入 `dialogue[]`，由 `storyboard` 转成 lettering 画进图里。
 
 ### 6.6 闸门总表
 

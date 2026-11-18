@@ -8,9 +8,7 @@
 export const ROLE_IDS = [
 	"script_analyst",
 	"director",
-	"character_designer",
 	"storyboard",
-	"prompt_artist",
 	"editor",
 	"repairer",
 ] as const;
@@ -470,7 +468,7 @@ export interface RunStatus {
 	endedAt?: number;
 	/** Current phase label, e.g. "生成画面". */
 	stage?: string;
-	/** Current role or action, e.g. "提示词美术". */
+	/** Current role or action, e.g. "分镜师". */
 	role?: string;
 	/** Last progress detail, e.g. "page-002/panel-03 · 读取 pages/page-002.json". */
 	detail?: string;

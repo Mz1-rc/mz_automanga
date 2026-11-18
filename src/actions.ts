@@ -10,7 +10,7 @@ import type { ImageArchiveFormat } from "./export.ts";
 import { ensureProjectWebPreviews } from "./previews.ts";
 import { listProjects, ProjectStore } from "./state.ts";
 import { readScriptInput } from "./script-input.ts";
-import { ADAPTATION_INFO, ADAPTATION_LEVELS, type AdaptationLevel, type RoleId, type StylePreset, type StyleSelection } from "./types.ts";
+import { ADAPTATION_INFO, ADAPTATION_LEVELS, ROLE_IDS, type AdaptationLevel, type RoleId, type StylePreset, type StyleSelection } from "./types.ts";
 import { updateStatus, notify, phaseLabel, formatDuration, formatTokens } from "./ui.ts";
 import { startWebServer, type WebServerHandle } from "./web/server.ts";
 
@@ -302,7 +302,7 @@ export function actionRunAll(ctx: ActionCtx, app: AppLike): string {
 
 export function actionRunRole(ctx: ActionCtx, app: AppLike, roleArg: string): string {
 	const role = roleArg.trim();
-	if (!isRole(role)) throw new Error(`未知角色：${roleArg}。可用：${["script_analyst", "director", "character_designer", "storyboard", "prompt_artist", "editor", "repairer"].join(", ")}`);
+	if (!isRole(role)) throw new Error(`未知角色：${roleArg}。可用：${ROLE_IDS.join(", ")}`);
 	const { store } = app.ensure(ctx.cwd);
 	const expected = roleForPhase(store.state.phase);
 	return startBackground(ctx, app, `运行 ${roleLabel(role)}`, async (pipeline) => {
@@ -595,7 +595,7 @@ export async function actionModels(ctx: ActionCtx, app: AppLike, roleArg?: strin
 	let role = roleArg;
 	let model = modelArg;
 	if (!role && ctx.hasUI) {
-		const choice = await ctx.ui.select("为哪个角色设置模型？", [...["script_analyst", "director", "character_designer", "storyboard", "prompt_artist", "editor", "repairer"], "全部恢复默认"]);
+		const choice = await ctx.ui.select("为哪个角色设置模型？", [...ROLE_IDS, "全部恢复默认"]);
 		if (!choice) return "未修改。";
 		if (choice === "全部恢复默认") {
 			store.project.agents.overrides = {};

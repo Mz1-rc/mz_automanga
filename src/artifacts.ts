@@ -284,23 +284,16 @@ export function validateRoleOutputs(ctx: RoleValidationContext): ValidationResul
 		case "director": {
 			const bible = readJson<Bible>(resolveWithin(ctx.projectRoot, "bible.json"));
 			issues.push(...validateBible(bible, ctx.project.style.lockedTokens, "").issues);
-			break;
-		}
-		case "character_designer": {
-			const bible = readJson<Bible>(resolveWithin(ctx.projectRoot, "bible.json"));
-			issues.push(...validateBible(bible, ctx.project.style.lockedTokens, "").issues);
-			issues.push(...validateRefPrompts(bible, ctx.projectRoot).issues);
+			// Director now owns the character reference prompts as well.
+			for (const member of bible?.cast ?? []) {
+				if (!member.refPrompt?.trim()) issues.push(`角色 ${member.id || "?"} 缺少 refPrompt（导演需一并产出）`);
+			}
 			break;
 		}
 		case "storyboard": {
 			const page = ctx.page;
 			const bible = readJson<Bible>(resolveWithin(ctx.projectRoot, "bible.json"));
-			issues.push(...validatePage(page, { bible, stylePrompt: "", stage: "storyboard", projectRoot: ctx.projectRoot }).issues);
-			break;
-		}
-		case "prompt_artist": {
-			const page = ctx.page;
-			const bible = readJson<Bible>(resolveWithin(ctx.projectRoot, "bible.json"));
+			// Storyboard now writes the final image prompt and lettering too.
 			issues.push(...validatePage(page, { bible, stylePrompt: "", stage: "prompts", projectRoot: ctx.projectRoot }).issues);
 			break;
 		}
@@ -329,12 +322,7 @@ export function roleTargets(role: RoleId, options: { bible?: Bible; pageId?: str
 			return ["source/analysis.json", "source/scenes.json"];
 		case "director":
 			return ["bible.json"];
-		case "character_designer": {
-			const ids = (options.bible?.cast ?? []).map((member) => member.id);
-			return ["bible.json", ...ids.map((id) => `characters/${id}/ref.prompt.txt`)];
-		}
 		case "storyboard":
-		case "prompt_artist":
 			return options.pageId ? [`pages/${options.pageId}.json`] : [];
 		case "editor":
 			return ["qa/report.json", "qa/report.md"];

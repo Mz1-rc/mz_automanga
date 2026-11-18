@@ -80,13 +80,11 @@ cp -R /root/mz_automanga/extensions /root/mz_automanga/src /root/mz_automanga/pr
 init
  → script_analysis（先确定改编等级；剧本分析师自判形态并拆解）
  → [script_gate]（有问题才逐条询问；可“按建议假设继续”）
- → design（导演产出 bible）
- → cast（角色设计师写立绘提示词）
+ → design（导演同时产出 bible、角色立绘提示词与 refs）
  → character_images（生成角色立绘）
  → [cast_gate]
- → storyboard（逐页分镜，对白 ≤2 条/格；文字长度不设硬上限）
+ → storyboard（逐页分镜 + 最终提示词/lettering，对白 ≤2 条/格）
  → [storyboard_gate]（出图前确认）
- → prompts（提示词美术把对白转成 lettering 指令）
  → image_gen（逐格串行出图）
  → qa（结构/文字完整性）→ [repair]（可选 1 轮）
  → build（默认导出仅图片 ZIP，可选 CBZ）
@@ -105,7 +103,7 @@ init
 | `/manga status` | 阶段、页/格、闸门、当前绘制模型、Web 地址 |
 | `/manga next` / `/manga step` | 后台推进下一阶段 |
 | `/manga run-all` | 后台跑完剩余流程 |
-| `/manga run <role>` | 运行指定角色 |
+| `/manga run <role>` | 运行指定角色（`script_analyst` / `director` / `storyboard` / `editor` / `repairer`） |
 | `/manga approve [意见]` | 通过当前闸门并继续 |
 | `/manga revise <意见>` | 按意见重做当前闸门产物 |
 | `/manga pause` / `/manga resume` / `/manga abort` | 暂停 / 恢复 / 中止 |
@@ -126,7 +124,7 @@ init
 | `/manga export [--cbz]` | 重新导出；默认仅图片普通 ZIP，`--cbz` 导出 CBZ |
 | `/manga compress` | 生成/刷新 Web 用 <500 KB 预览图 |
 
-角色 id：`script_analyst`、`director`、`character_designer`、`storyboard`、`prompt_artist`、`editor`、`repairer`。
+角色 id：`script_analyst`、`director`、`storyboard`、`editor`、`repairer`。`director` 同时负责角色立绘提示词，`storyboard` 同时负责最终图像提示词与 lettering。
 
 主 agent 也可以调用 `manga_team` 工具（`executionMode: "sequential"`，耗时动作后台启动后立即返回）。
 

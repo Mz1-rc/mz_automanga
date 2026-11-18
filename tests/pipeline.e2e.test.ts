@@ -117,20 +117,14 @@ function fakeRunner(): RoleRunner {
 								"seventeen-year-old Chinese girl, shoulder-length black hair with blunt bangs, dark grey eyes, slim build, navy school blazer and red ribbon",
 							outfits: { default: "navy blazer, white shirt, red ribbon" },
 							personality: "沉默",
+							refPrompt:
+								"character reference sheet, three views, seventeen-year-old Chinese girl, black hair, navy blazer, neutral background, no watermark",
 							refSheet: "characters/lin/ref.png",
 						},
 					],
 					assumptions: [],
 				};
 				write(options.projectRoot, "bible.json", bible);
-				break;
-			}
-			case "character_designer": {
-				const bible = readJson<Bible>(join(options.projectRoot, "bible.json"))!;
-				bible.cast[0].refPrompt =
-					"character reference sheet, three views, seventeen-year-old Chinese girl, black hair, navy blazer, neutral background, no watermark";
-				write(options.projectRoot, "bible.json", bible);
-				write(options.projectRoot, "characters/lin/ref.prompt.txt", bible.cast[0].refPrompt);
 				break;
 			}
 			case "storyboard": {
@@ -164,11 +158,6 @@ function fakeRunner(): RoleRunner {
 						image: { status: "pending" as const },
 					})),
 				};
-				write(options.projectRoot, pageTarget ?? "pages/page-001.json", page);
-				break;
-			}
-			case "prompt_artist": {
-				const page = readJson<MangaPage>(join(options.projectRoot, pageTarget ?? "pages/page-001.json"))!;
 				for (const panel of page.panels) {
 					const text = panel.dialogue[0].text;
 					panel.promptCore = `${panel.shot} shot of LIN on the roof`;
@@ -218,6 +207,12 @@ test("pipeline runs end-to-end with a fake runner and mock Agnes, then skips cac
 		assert.equal(reloaded.state.stats.pages, 1);
 		assert.equal(reloaded.state.stats.panels, 3);
 		assert.equal(reloaded.state.stats.images, 3);
+		const roles = new Set<string>(reloaded.state.runs.map((run) => String(run.role)));
+		assert.ok(roles.has("director"));
+		assert.ok(roles.has("storyboard"));
+		assert.equal(roles.has("character_designer"), false);
+		assert.equal(roles.has("prompt_artist"), false);
+		assert.ok(existsSync(join(reloaded.root, "characters", "lin", "ref.prompt.txt")));
 		const page = reloaded.readPage(1);
 		assert.ok(page?.panels.every((panel) => panel.image?.status === "done"));
 		assert.ok(page?.panels.every((panel) => panel.prompt?.includes("没来。")));

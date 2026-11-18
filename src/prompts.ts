@@ -98,16 +98,13 @@ function readingList(role: RoleId, root: string, options: TaskPromptOptions): st
 		case "director":
 			add("source/scenes.json", "场景清单（便于快速浏览）");
 			break;
-		case "character_designer":
-			break;
 		case "storyboard": {
 			const prev = (options.pageIndex ?? 1) - 1;
 			if (prev >= 1) add(`pages/page-${String(prev).padStart(3, "0")}.json`, "上一页，用于衔接");
 			break;
 		}
-		case "prompt_artist":
 		case "repairer":
-			if (options.pageId) add(`pages/${options.pageId}.json`, "当前页（读取后补全，不要改剧情）");
+			if (options.pageId) add(`pages/${options.pageId}.json`, "当前页（读取后修复，不要改剧情）");
 			break;
 		case "editor":
 			add("qa/report.json", "上一次 QA 报告（如存在）");
@@ -195,9 +192,9 @@ function schemaPage(): string {
           "shape": "rounded | spiky | cloud | box", "tail": "bottom-right", "size": "small | medium | large" } }
       ],
       "sfx": ["string"],
-      "promptCore": "string（仅 prompt_artist 填写）",
-      "lettering": { "instructions": "English lettering instruction（仅 prompt_artist 填写）" },
-      "prompt": "final image prompt（仅 prompt_artist 填写）",
+      "promptCore": "string（由分镜师一并填写）",
+      "lettering": { "instructions": "English lettering instruction（由分镜师一并填写）" },
+      "prompt": "final image prompt（由分镜师一并填写）",
       "negative": "garbled characters, misspelled characters, extra text, watermark, signature, blurry text",
       "refs": ["characters/<id>/ref.png"],  // 只放角色立绘；连续性参考由出图阶段处理
       "continuityFrom": null,
@@ -256,35 +253,21 @@ function roleTask(options: TaskPromptOptions): string {
 			].join("\n");
 		case "director":
 			return [
-				"## 本次任务：导演 / 企划",
+				"## 本次任务：导演 / 企划（含角色立绘提示词）",
 				"1. 读取 source/analysis.json、source/clarifications.md 与 source/script.md。",
-				"2. 产出 bible.json：世界观、画风锁定、角色卡、场景清单。",
+				"2. 产出 bible.json：世界观、画风锁定、角色卡、场景清单，以及每个角色的 refPrompt。",
 				"3. 用户的回答优先于 analysis.assumptions；未回答的问题按 assumption 处理，并写进 bible.assumptions。",
 				"4. 角色只能来自剧本与分析，不得新增主线人物；配角最多 2 个。",
 				"5. art.stylePrompt 必须逐字包含任务中给出的“画风锁定串”（含 lettering 与禁止项）。",
 				"6. canonical 用英文书写，60–120 词，包含年龄、性别、发型发色、瞳色、体型、默认服装、标志物。",
+				"7. 为每个角色写 refPrompt（英文；三视图：正面全身 + 四分之三 + 面部特写；中性灰背景；身份一致性优先），并填写 refSheet：characters/<id>/ref.png。",
+				"8. refPrompt 模板：character reference sheet, full-body front view + three-quarter view + face close-up side by side, <canonical>, <default outfit>, neutral light grey background, even studio lighting, character design sheet, consistent proportions, <style base prompt>, no watermark, no text other than the specified lettering",
+				"9. 立绘提示词禁止出现对白文字；参考图只用于身份，不画气泡。refPrompt 必须写在 bible.json 的 cast[] 中，系统会同步到 characters/<id>/ref.prompt.txt。",
 				"",
 				"## 输出契约",
 				"```json",
 				schemaBible(),
 				"```",
-			].join("\n");
-		case "character_designer":
-			return [
-				"## 本次任务：角色设计师",
-				"1. 读取 bible.json。",
-				"2. 为每个角色补全 refPrompt（英文；三视图：正面全身 + 四分之三 + 面部特写；中性灰背景；身份一致性优先）。",
-				"3. 每个角色的 refPrompt 同时写入 characters/<id>/ref.prompt.txt（纯文本，只放提示词）。",
-				"4. 更新 bible.json 中对应角色的 refPrompt 与 refSheet（characters/<id>/ref.png）。",
-				"5. 不要新增角色，不要修改 canonical 的身份描述。",
-				"6. 立绘提示词禁止出现对白文字；参考图只用于身份，不画气泡。",
-				"",
-				"## refPrompt 模板",
-				"character reference sheet, full-body front view + three-quarter view + face close-up side by side, <canonical>, <default outfit>, neutral light grey background, even studio lighting, character design sheet, consistent proportions, <style base prompt>, no watermark, no text other than the specified lettering",
-				"",
-				"## 输出契约",
-				"- bible.json（完整）",
-				"- characters/<id>/ref.prompt.txt（每个角色一个）",
 			].join("\n");
 		case "storyboard": {
 			const index = pageIndex ?? 1;
@@ -317,7 +300,12 @@ function roleTask(options: TaskPromptOptions): string {
 				"5. 每格 ≤2 条对白；文字不设硬性字数上限，较长内容可拆成多条气泡；每条必须给出 bubble.position/shape/tail。",
 				"6. 一条台词需要拆格时，按原文顺序拆开，不得删改或丢失关键信息。",
 				"7. narration/thought 也要作为 dialogue 写入，并给出 bubble（旁白可用 box，心理活动用 cloud）；后续会画进图里。",
-				"8. 不要写 prompt / refs / image 字段（留给提示词美术与出图阶段）；image.status 写 pending。",
+				"8. 同时补全每格的 promptCore / refs / lettering / prompt / negative；image.status 写 pending。",
+				"9. 拼接顺序：shot + camera → 角色 canonical + outfit + pose + expression → action → 场景/时间 → 光线 → 构图与留白 → Lettering → stylePrompt（逐字）→ Avoid 句。",
+				"10. Lettering 必须逐字包含每条 dialogue.text（含标点），并写明气泡位置、形状、尾巴指向、文字颜色与字体风格；位置必须与 bubble 字段一致。",
+				"11. 文字不设硬性字数上限；每条 dialogue.text 都必须完整进入 lettering，不得删字或改写。",
+				"12. refs 只列角色立绘（按 cast 顺序）；上一格/连续性参考由出图阶段自动追加，不要写进 refs。prompt 开头用英文说明每张参考图的作用。",
+				"13. prompt 末尾必须出现：no text other than the specified lettering。不要改写画风锁定串，也不要把锁定词写进 Avoid 段。",
 				...planLines,
 				"",
 				...adaptationRules(project),
@@ -334,26 +322,7 @@ function roleTask(options: TaskPromptOptions): string {
 				"```",
 			].join("\n");
 		}
-		case "prompt_artist": {
-			const id = pageId ?? "page-001";
-			return [
-				`## 本次任务：提示词美术（${id}）`,
-				`1. 读取 pages/${id}.json 与 bible.json。`,
-				"2. 读取后原样保留剧情、分镜、对白；只补全每格的 promptCore / refs / lettering / prompt / negative。narration/thought 同样必须生成 lettering，不要遗漏。",
-				"3. 拼接顺序：shot + camera → 角色 canonical + outfit + pose + expression → action → 场景/时间 → 光线 → 构图与留白 → Lettering → stylePrompt（逐字）→ Avoid 句。",
-				"4. Lettering 必须逐字包含每条 dialogue.text（含标点），并写明气泡位置、形状、尾巴指向、文字颜色与字体风格。",
-				"5. 文字不设硬性字数上限；每条 dialogue.text 都必须完整进入 lettering，不得删字或改写。",
-				"6. prompt 末尾必须出现：no text other than the specified lettering。",
-				"7. refs 只列角色立绘（按 cast 顺序）。上一格/连续性参考由出图阶段自动追加，不要写进 refs。参考图说明写在 prompt 开头。",
-				"8. 不要修改 characters、dialogue、image 以外无关字段；promptOverride 保持不变。",
-				"",
-				"## Lettering 示例",
-				"Lettering (must be drawn into the image): one rounded white speech bubble at top-left with a thin black outline and a tail pointing to LIN, containing the Simplified Chinese text \"……果然还是没来。\" in clean black comic lettering. Keep every character crisp and correct; no extra characters.",
-				"",
-				"## 输出契约",
-				"- pages/" + id + ".json（完整页面文件）",
-			].join("\n");
-		}
+
 		case "editor": {
 			const pages = options.config && pageId ? "" : "";
 			return [

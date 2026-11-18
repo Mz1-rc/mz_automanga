@@ -166,7 +166,9 @@ export class MangaPipeline {
 			case "design":
 				return this.runDirector();
 			case "cast":
-				return this.runCharacterDesigner();
+				// Compatibility: old projects that stopped at the old cast phase now
+				// run the merged director (bible + reference prompts).
+				return this.runDirector();
 			case "character_images":
 				return this.runCharacterImages();
 			case "cast_gate":
@@ -176,7 +178,10 @@ export class MangaPipeline {
 			case "storyboard_gate":
 				return this.runStoryboardGate();
 			case "prompts":
-				return this.runPrompts();
+				// Compatibility: the prompt artist is merged into storyboard. Re-run
+				// those pages with the merged role instead of leaving the project stuck.
+				this.store.transition("storyboard");
+				return this.runStoryboard(undefined, true);
 			case "image_gen":
 				return this.runImageGen();
 			case "qa":
@@ -240,7 +245,7 @@ export class MangaPipeline {
 				this.store.transition("storyboard");
 				break;
 			case "storyboard":
-				this.store.transition("prompts");
+				this.store.transition("image_gen");
 				break;
 			case "final":
 				this.store.transition("done");
@@ -266,8 +271,8 @@ export class MangaPipeline {
 				return;
 			}
 			case "cast":
-				this.store.transition("cast");
-				return this.runCharacterDesigner(feedback);
+				this.store.transition("design");
+				return this.runDirector(feedback);
 			case "storyboard":
 				this.store.transition("storyboard");
 				return this.runStoryboard(feedback);
@@ -371,23 +376,20 @@ export class MangaPipeline {
 				feedback: feedback ?? this.takeFeedback(),
 			});
 			if (!result.ok) return;
-			this.store.transition("cast");
+			this.syncRefPromptFiles();
+			this.store.transition("character_images");
 			this.ui.updateStatus(this.store);
 		});
 	}
 
-	async runCharacterDesigner(feedback?: string): Promise<void> {
-		this.beginStage("角色设计", "角色设计师");
-		await this.locked("character_designer", async () => {
-			const bible = this.store.readBible();
-			const result = await this.runRoleWithRetry("character_designer", {
-				targets: roleTargets("character_designer", { bible }),
-				feedback: feedback ?? this.takeFeedback(),
-			});
-			if (!result.ok) return;
-			this.store.transition("character_images");
-			this.ui.updateStatus(this.store);
-		});
+	/** Mirror inline refPrompt values to the per-character text files. */
+	private syncRefPromptFiles(): void {
+		const bible = this.store.readBible();
+		for (const member of bible?.cast ?? []) {
+			const prompt = member.refPrompt?.trim();
+			if (!prompt) continue;
+			writeAtomic(join(this.store.root, "characters", member.id, "ref.prompt.txt"), `${prompt}\n`);
+		}
 	}
 
 	async runCharacterImages(force = false, onlyId?: string): Promise<void> {
@@ -438,8 +440,8 @@ export class MangaPipeline {
 			return;
 		}
 		if (decision.kind === "revise") {
-			this.store.transition("cast");
-			await this.runCharacterDesigner(decision.feedback);
+			this.store.transition("design");
+			await this.runDirector(decision.feedback);
 			return;
 		}
 		this.store.transition("storyboard");
@@ -452,7 +454,7 @@ export class MangaPipeline {
 
 	async runStoryboard(feedback?: string, force = false): Promise<void> {
 		await this.ensureAdaptationLevel();
-		this.beginStage("分镜", "分镜师");
+		this.beginStage("分镜 / 提示词", "分镜师");
 		await this.locked("storyboard", async () => {
 			const analysis = this.store.readAnalysis();
 			if (!analysis) throw new Error("找不到 analysis.json，无法分镜");
@@ -470,8 +472,9 @@ export class MangaPipeline {
 				if (this.signal?.aborted) throw new Error("已取消");
 				const pageId = pageIdOf(index);
 				const existing = this.store.readPage(index);
-				if (!force && !fb && existing) {
-					this.report(`分镜 ${pageId} 已存在，跳过`);
+				const ready = Boolean(existing?.panels?.length) && existing!.panels.every((panel) => Boolean(panel.prompt?.trim()));
+				if (!force && !fb && ready) {
+					this.report(`分镜 ${pageId} 已存在且提示词完整，跳过`);
 					completed++;
 					continue;
 				}
@@ -498,7 +501,7 @@ export class MangaPipeline {
 		const summary = [
 			`共 ${pages.length} 页，${this.store.state.stats.panels} 格。`,
 			`目录：${join(this.store.root, "pages")}`,
-			"请在 Web 预览中查看分镜文字（图片尚未生成）。",
+			"分镜、提示词与 lettering 已就绪；请在 Web 预览中查看文字（图片尚未生成）。",
 		].join("\n");
 		const decision = await runReviewGate({
 			gate: "storyboard",
@@ -516,37 +519,8 @@ export class MangaPipeline {
 			await this.runStoryboard(decision.feedback, true);
 			return;
 		}
-		this.store.transition("prompts");
+		this.store.transition("image_gen");
 		this.ui.updateStatus(this.store);
-	}
-
-	async runPrompts(feedback?: string, force = false): Promise<void> {
-		this.beginStage("提示词 / lettering", "提示词美术");
-		await this.locked("prompt_artist", async () => {
-			const keys = this.store.listPageKeys();
-			const fb = feedback ?? this.takeFeedback();
-			for (const [index, key] of keys.entries()) {
-				if (this.signal?.aborted) throw new Error("已取消");
-				const page = this.store.readPageByKey(key);
-				if (!page) continue;
-				const ready = page.panels.every((panel) => Boolean(panel.prompt?.trim()));
-				if (!force && !fb && ready) {
-					this.report(`提示词 ${key} 已存在，跳过`);
-					continue;
-				}
-				this.report(`提示词 ${key}`, { step: index + 1, total: keys.length });
-				const result = await this.runRoleWithRetry("prompt_artist", {
-					pageIndex: page.index,
-					pageId: key,
-					targets: [`pages/${key}.json`],
-					feedback: fb,
-				});
-				if (!result.ok) return;
-			}
-			this.ui.notify("提示词与 lettering 已就绪。", "info");
-			this.store.transition("image_gen");
-			this.ui.updateStatus(this.store);
-		});
 	}
 
 	// ---------------------------------------------------------------------
@@ -851,12 +825,8 @@ export class MangaPipeline {
 				return this.runScriptAnalysis();
 			case "director":
 				return this.runDirector();
-			case "character_designer":
-				return this.runCharacterDesigner();
 			case "storyboard":
 				return this.runStoryboard(undefined, true);
-			case "prompt_artist":
-				return this.runPrompts(undefined, true);
 			case "editor":
 				return this.runQa();
 			case "repairer":
@@ -965,10 +935,8 @@ export class MangaPipeline {
 				return ["source/script.md", "source/clarifications.md"];
 			case "director":
 				return ["source/script.md", "source/analysis.json", "source/clarifications.md"];
-			case "character_designer":
-				return ["bible.json"];
 			case "storyboard":
-			case "prompt_artist":
+				return ["bible.json", ...(pageId ? [`pages/${pageId}.json`] : [])];
 			case "repairer":
 				return ["bible.json", ...(pageId ? [`pages/${pageId}.json`] : [])];
 			case "editor":
@@ -1115,11 +1083,11 @@ export function roleForPhase(phase: Phase): RoleId | undefined {
 		case "design":
 			return "director";
 		case "cast":
-			return "character_designer";
+			return "director";
 		case "storyboard":
 			return "storyboard";
 		case "prompts":
-			return "prompt_artist";
+			return "storyboard";
 		case "qa":
 			return "editor";
 		case "repair":
@@ -1134,13 +1102,9 @@ export function roleLabel(role: RoleId): string {
 		case "script_analyst":
 			return "剧本分析师";
 		case "director":
-			return "导演";
-		case "character_designer":
-			return "角色设计师";
+			return "导演 / 角色设计师";
 		case "storyboard":
-			return "分镜师";
-		case "prompt_artist":
-			return "提示词美术";
+			return "分镜师 / 提示词美术";
 		case "editor":
 			return "审校";
 		case "repairer":
@@ -1159,11 +1123,11 @@ function phaseLabelForStage(phase: Phase): string {
 		case "design":
 			return "企划 / 角色设定";
 		case "cast":
-			return "角色设计";
+			return "企划 / 角色设定";
 		case "storyboard":
-			return "分镜";
+			return "分镜 / 提示词";
 		case "prompts":
-			return "提示词 / lettering";
+			return "分镜 / 提示词";
 		case "qa":
 			return "审校";
 		case "repair":
