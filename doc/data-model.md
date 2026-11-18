@@ -8,6 +8,8 @@
 
 ## 5. 数据模型
 
+> 用户初始备注（如填写）保存在 `source/user-note.md`，并记录在 `source/inputs.json.note`；`script_analyst` 会把它作为创作意图参考。
+
 ### 5.1 `project.json`
 
 ```json

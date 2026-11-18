@@ -108,7 +108,7 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 			role: Type.Optional(Type.String({ description: "run_role / configure 的角色 id" })),
 			page: Type.Optional(Type.String({ description: "regen_panel / prompt_panel 的页，如 page-001" })),
 			panel: Type.Optional(Type.String({ description: "regen_panel / prompt_panel 的格，如 panel-02" })),
-			note: Type.Optional(Type.String({ description: "regen_panel 的额外方向" })),
+			note: Type.Optional(Type.String({ description: "init 的初始备注；regen_panel 的额外方向" })),
 			final: Type.Optional(Type.Boolean({ description: "regen_panel 是否用最终尺寸" })),
 			feedback: Type.Optional(Type.String({ description: "approve / revise 的意见" })),
 			host: Type.Optional(Type.String({ description: "web 绑定地址；默认 0.0.0.0（只读、无鉴权）" })),
@@ -139,6 +139,7 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 					const store = await actionInit(actionCtx, app, {
 						title: params.title,
 						scriptPath: params.script_path,
+						note: params.note,
 						style: params.style,
 						adaptation: params.adaptation,
 					});

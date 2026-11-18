@@ -532,7 +532,8 @@ for each issue:
 
 1. 剧本路径：`--script <文件|目录>`；交互模式下用 `ctx.ui.input` 询问路径。目录递归读取文本文件并按自然顺序合并。
 2. 书名（可空；目录输入默认取目录名，否则从剧本前 1600 字生成临时标题，分析完成后替换为 `titleSuggestion`）。
-3. **画风选择**（`ctx.ui.select`）：
+3. 初始备注（可空；也可用 `--note <备注>`）：保存到 `source/user-note.md`，并在剧本分析时加入必读参考；备注是创作意图，不是剧本事实。
+4. **画风选择**（`ctx.ui.select`）：
 
 | 选项 | preset | 默认比例 | stylePrompt 骨架 |
 |---|---|---|---|
@@ -541,8 +542,8 @@ for each issue:
 | 竖屏条漫 | `webtoon` | `9:16` | Korean webtoon style, full color, soft gradients, vertical composition, generous negative space |
 | 自定义 | `custom` | `3:4` | 用户输入（`ctx.ui.editor`），系统追加 lockedTokens |
 
-4. 若自定义：再问比例（`3:4` / `2:3` / `9:16` / `1:1`）。
-5. **改编等级选择**（`ctx.ui.select`，也可用 `--adaptation strict|balanced|free`）：
+5. 若自定义：再问比例（`3:4` / `2:3` / `9:16` / `1:1`）。
+6. **改编等级选择**（`ctx.ui.select`，也可用 `--adaptation strict|balanced|free`）：
 
 | 等级 | 名称 | 规则 |
 |---|---|---|
@@ -550,7 +551,7 @@ for each issue:
 | `balanced` | 适当调整改写 | 保留主线、关键事实/台词与结局；可调整节奏、补充过渡/旁白/心理活动 |
 | `free` | 由 agent 按需自由调整 | 以剧本为素材，按漫画节奏重组，可增补过渡、反应、旁白、心理活动与对白 |
 
-6. 写入 `project.json.style` 与 `project.json.adaptation`，进入 `script_analysis`。若旧项目没有 `adaptation`，在首次 `script_analysis` 前再次询问；非交互运行默认 `balanced`。
+7. 写入 `project.json.style` 与 `project.json.adaptation`，进入 `script_analysis`。若旧项目没有 `adaptation`，在首次 `script_analysis` 前再次询问；非交互运行默认 `balanced`。
 
 所有预设都追加 lettering 约束（不再禁止文字）：
 

@@ -84,8 +84,8 @@ function bool(flags: Record<string, string | boolean>, name: string): boolean {
 
 const HELP = `mz_automanga · 多 Agent 漫画流水线
 
-  /manga init [--script <文件|目录>] [--title <书名>] [--style <preset>]
-              [--adaptation strict|balanced|free]
+  /manga init [--script <文件|目录>] [--title <书名>] [--note <初始备注>]
+              [--style <preset>] [--adaptation strict|balanced|free]
   /manga status
   /manga next              推进下一阶段（后台）
   /manga step              只执行下一步（后台）
@@ -136,6 +136,7 @@ export async function handleMangaCommand(
 				await actionInit(ctx, app, {
 					title: str(flags, "title") ?? (rest || undefined),
 					scriptPath: str(flags, "script") ?? str(flags, "dir"),
+					note: str(flags, "note"),
 					style: str(flags, "style"),
 					customPrompt: str(flags, "custom"),
 					ratio: str(flags, "ratio") as never,

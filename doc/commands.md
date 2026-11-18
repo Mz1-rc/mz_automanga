@@ -12,7 +12,7 @@
 
 | 命令 | 作用 |
 |---|---|
-| `/manga init [--script <文件\|目录>] [--title <t>] [--style <preset>] [--adaptation strict\|balanced\|free]` | 新建项目：读取剧本 → 书名 → 画风 → 改编等级 |
+| `/manga init [--script <文件\|目录>] [--title <t>] [--note <备注>] [--style <preset>] [--adaptation strict\|balanced\|free]` | 新建项目：读取剧本 → 书名 → 初始备注 → 画风 → 改编等级；备注供剧本分析参考 |
 | `/manga next` | 后台推进下一阶段（立即返回） |
 | `/manga step` | 后台只执行下一个角色或代码阶段 |
 | `/manga run <role>` | 后台运行当前阶段对应的角色 |

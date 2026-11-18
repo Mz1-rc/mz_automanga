@@ -4,7 +4,7 @@ import { composeStylePrompt, makeStyle, STYLE_PRESETS, type MangaConfig } from "
 import { createProviderFromConfig } from "./imagegen-adapter.ts";
 import { resolveProviderKey, maskKey, saveProviderKey } from "./keys.ts";
 import { imageProviders } from "./imagegen/index.ts";
-import { ensureDir, listDirs, resolveWithin, writeJsonAtomic } from "./paths.ts";
+import { ensureDir, listDirs, resolveWithin, writeAtomic, writeJsonAtomic } from "./paths.ts";
 import { MangaPipeline, gateIdForPhase, isRole, roleForPhase, roleLabel, pipelineSummary, type PipelineUi } from "./pipeline.ts";
 import type { ImageArchiveFormat } from "./export.ts";
 import { ensureProjectWebPreviews } from "./previews.ts";
@@ -155,6 +155,8 @@ export interface InitInput {
 	title?: string;
 	/** A single script file or a directory of text files. */
 	scriptPath?: string;
+	/** Optional user note saved as a reference for script analysis. */
+	note?: string;
 	style?: string;
 	customPrompt?: string;
 	ratio?: StyleSelection["ratio"];
@@ -184,6 +186,11 @@ export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput)
 	if (!title && ctx.hasUI) {
 		title = (await ctx.ui.input("书名（可留空，自动根据剧本内容取名）", ""))?.trim();
 		titleSource = title ? "user" : "auto";
+	}
+
+	let note = input.note?.trim();
+	if (note === undefined && ctx.hasUI) {
+		note = (await ctx.ui.input("初始备注（可留空，会作为剧本分析参考）", ""))?.trim();
 	}
 
 	const config = app.baseConfig();
@@ -229,10 +236,14 @@ export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput)
 	}
 
 	const { store } = app.create(ctx.cwd, { title, titleSource, style, adaptation, script });
+	if (note) {
+		writeAtomic(join(store.root, "source", "user-note.md"), `# 用户初始备注\n\n${note}\n`);
+	}
 	writeJsonAtomic(join(store.root, "source", "inputs.json"), {
 		inputPath: absPath,
 		fromDirectory: scriptInput.fromDirectory,
 		files: scriptInput.files,
+		...(note ? { note } : {}),
 	});
 	notify(
 		ctx as never,

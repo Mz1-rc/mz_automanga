@@ -932,7 +932,11 @@ export class MangaPipeline {
 	private inputFilesFor(role: RoleId, pageId?: string): string[] {
 		switch (role) {
 			case "script_analyst":
-				return ["source/script.md", "source/clarifications.md"];
+				return [
+					"source/script.md",
+					...(fileExists(join(this.store.root, "source", "user-note.md")) ? ["source/user-note.md"] : []),
+					"source/clarifications.md",
+				];
 			case "director":
 				return ["source/script.md", "source/analysis.json", "source/clarifications.md"];
 			case "storyboard":

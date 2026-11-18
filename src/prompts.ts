@@ -94,6 +94,7 @@ function readingList(role: RoleId, root: string, options: TaskPromptOptions): st
 	add("bible.json", "世界观、画风锁定与角色卡");
 	switch (role) {
 		case "script_analyst":
+			add("source/user-note.md", "用户初始备注（分析时优先参考的创作意图）");
 			break;
 		case "director":
 			add("source/scenes.json", "场景清单（便于快速浏览）");
@@ -224,7 +225,7 @@ function roleTask(options: TaskPromptOptions): string {
 		case "script_analyst":
 			return [
 				"## 本次任务：剧本分析师",
-				"1. 读取 source/script.md，判断剧本形态（novel / screenplay / outline / idea）。",
+				"1. 读取 source/script.md 与 source/user-note.md（如有），判断剧本形态（novel / screenplay / outline / idea）。",
 				"2. 拆成场景，逐场景记录地点、时间、在场角色、节拍、对白。",
 				"3. 找出会阻塞后续创作的问题（缺失结局、动机断裂、时间线矛盾、角色无名/重名、对白无归属、无法视觉化、篇幅与页数严重不匹配）。",
 				"4. 最多 5 个问题，按影响排序；每个问题必须有 2–4 个选项和一个默认 assumption。",
@@ -233,6 +234,7 @@ function roleTask(options: TaskPromptOptions): string {
 				"7. 按任务事实中的改编等级处理剧本；等级越高，越可以补写过渡、旁白与心理活动。",
 				"8. pageEstimate 必须按实际可画内容估算：通常每页承载 3–6 个节拍，约对应 120–180 字原文；不要为了长场面虚报页数，后续分镜会按场景数、节拍数和原文篇幅收紧。",
 				"9. 不要用“回顾/重放/回响/总结”这类重复剧情的页来凑页数；拆场景时保证每个场景都有新信息。",
+				"10. 用户初始备注是创作意图，不是剧本事实；在不违反原文和改编等级的前提下，用它决定标题、详略、角色取舍与需要确认的问题。",
 				"",
 				...adaptationRules(project),
 				"",
