@@ -6,10 +6,11 @@
  * provider config. Everything inside `src/imagegen/` stays independent from
  * these modules.
  */
-import { existsSync, renameSync } from "node:fs";
+import { existsSync, renameSync, unlinkSync } from "node:fs";
+import { dirname } from "node:path";
 import type { MangaConfig } from "./config.ts";
 import { createImageProvider, imageProviders, type ImageProvider, type ImageProviderConfig, type ImageGenWorkspace } from "./imagegen/index.ts";
-import { panelRelPath, readText, resolveWithin, writeAtomic } from "./paths.ts";
+import { ensureDir, panelRelPath, readText, resolveWithin, writeAtomic } from "./paths.ts";
 import { ensureWebPreview } from "./previews.ts";
 import type { ProjectStore } from "./state.ts";
 import { toMonochromePng } from "./util/png-grayscale.ts";
@@ -93,12 +94,13 @@ class ProjectImageWorkspace implements ImageGenWorkspace {
 	prepareImage(rel: string, keepVersions: number): string {
 		const abs = resolveWithin(this.store.root, rel);
 		bumpVersion(abs, keepVersions);
+		ensureDir(dirname(abs));
 		return abs;
 	}
 
 	afterImageWritten(rel: string): void {
 		const abs = resolveWithin(this.store.root, rel);
-		if (isMonochromeStyle(this.store.project.style)) toMonochromePng(abs);
+		if (/\.png$/i.test(rel) && isMonochromeStyle(this.store.project.style)) toMonochromePng(abs);
 		ensureWebPreview(this.store.root, rel);
 	}
 
@@ -108,8 +110,16 @@ class ProjectImageWorkspace implements ImageGenWorkspace {
 	}
 
 	writeSourceUrl(rel: string, url: string | undefined): void {
-		if (!url) return;
-		writeAtomic(resolveWithin(this.store.root, sourceUrlPath(rel)), `${url}\n`);
+		const path = resolveWithin(this.store.root, sourceUrlPath(rel));
+		if (!url) {
+			try {
+				unlinkSync(path);
+			} catch {
+				// no stale source URL
+			}
+			return;
+		}
+		writeAtomic(path, `${url}\n`);
 	}
 }
 

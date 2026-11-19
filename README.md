@@ -64,7 +64,7 @@ cp -R /root/mz_automanga/extensions /root/mz_automanga/src /root/mz_automanga/pr
 ```text
 /manga init --script ./script.md        # 单个文件
 /manga init --script ./chapters/        # 目录：递归合并 .md/.markdown/.txt/.text
-# 或交互式：/manga init   → 输入剧本路径 → 书名 → 初始备注 → 画风/比例 → 改编等级
+# 或交互式：/manga init   → 输入剧本路径 → 书名 → 初始备注 → 角色参考图 → 画风/比例 → 改编等级
 
 /manga key            # 第一次出图前设置 Agnes API Key
 /manga next           # 推进：剧本分析
@@ -99,7 +99,7 @@ init
 
 | 命令 | 作用 |
 |---|---|
-| `/manga init [--script <文件\|目录>] [--title <书名>] [--note <初始备注>] [--style <preset>] [--adaptation strict\|balanced\|free]` | 新建项目；无参数时进入交互；初始备注会作为剧本分析参考 |
+| `/manga init [--script <文件\|目录>] [--title <书名>] [--note <初始备注>] [--refs <图片\|目录>] [--ref-mode direct\|restyle] [--style <preset>] [--adaptation strict\|balanced\|free]` | 新建项目；无参数时进入交互；初始备注供剧本分析参考；`--refs` 导入角色参考图，`direct` 直接使用，`restyle` 跟随画风重绘 |
 | `/manga status` | 阶段、页/格、闸门、当前绘制模型、Web 地址 |
 | `/manga next` / `/manga step` | 后台推进下一阶段 |
 | `/manga run-all` | 后台跑完剩余流程 |
@@ -153,8 +153,9 @@ init
 project.json              标题、画风、比例、尺寸、改编等级、闸门
 state.json                阶段、闸门、运行记录、统计
 source/script.md          用户剧本（目录输入已合并，带 `# ===== 文件 =====` 分隔）
-source/inputs.json        原始输入路径、是否目录、文件清单、初始备注
+source/inputs.json        原始输入路径、是否目录、文件清单、初始备注、参考图记录
 source/user-note.md       用户初始备注（仅非空时创建，剧本分析参考）
+source/character-refs/    用户角色参考图与 manifest.json（仅导入时创建）
 source/analysis.json      剧本形态、场景、问题、假设
 source/clarifications.md  用户对问题的回答
 bible.json                世界观、画风锁定、角色卡
@@ -204,6 +205,31 @@ no watermark, no signature, no text other than the specified lettering
 - 纯空镜必须承担转场/时间/情绪变化，并补一条 `narration` 或 `thought`。
 - 原文只有景物描写时，优先补角色反应、心理活动或说明性旁白；旁白与对话不再限定字数，长句可按原文顺序拆成多条气泡。
 - QA 会报告纯空镜与连续空镜，便于在出图前复查。
+
+## 角色参考图
+
+`/manga init` 会询问是否有角色参考图，也可以直接传：
+
+```bash
+/manga init --script ./story.md --refs ./refs/ --ref-mode restyle
+/manga init --script ./story.md --refs ./protagonist.png --ref-mode direct
+```
+
+支持单张图片或目录，递归收集 `.png` / `.jpg` / `.jpeg` / `.webp`，并复制到：
+
+```text
+source/character-refs/
+source/character-refs/manifest.json
+```
+
+两种使用方式：
+
+| 模式 | 行为 |
+|---|---|
+| `direct` | 不调用图像模型，直接把用户图复制为角色立绘；分镜引用实际 `refSheet` 路径 |
+| `restyle` | 把用户图作为身份参考，按当前画风重新生成角色设定图 |
+
+导演会读取清单，把匹配的参考图写入角色的 `userRefs`；匹配不确定时由代码按文件名与角色名/id 兜底。若剩余图片数与角色数正好相等，会按顺序配对。
 
 ## API Key
 
@@ -299,10 +325,10 @@ Ark 内置可选模型：`doubao-seedream-5-5-261028`（默认）、`doubao-seed
 ## 测试
 
 ```bash
-node --experimental-strip-types --test tests/*.test.ts   # 59 个用例
+node --experimental-strip-types --test tests/*.test.ts   # 62 个用例
 ```
 
-测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering/空镜校验、改编等级与提示词注入、黑白画风颜色锁与灰度兜底、Agnes/Ark 重试与流式下载上限、图片压缩到 <500 KB、Web 只读方法白名单/默认 0.0.0.0/SSE/Range/中文路径/人设图、ZIP/CBZ 导出、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过、图像模块 provider/workspace 解耦、Ark payload/尺寸映射、模型选择与状态显示、错误分层。
+测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering/空镜校验、角色参考图导入与 direct/restyle、改编等级与提示词注入、黑白画风颜色锁与灰度兜底、Agnes/Ark 重试与流式下载上限、图片压缩到 <500 KB、Web 只读方法白名单/默认 0.0.0.0/SSE/Range/中文路径/人设图、ZIP/CBZ 导出、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过、图像模块 provider/workspace 解耦、Ark payload/尺寸映射、模型选择与状态显示、错误分层。
 
 ## 文档
 

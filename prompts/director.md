@@ -8,6 +8,7 @@
 - 画风锁定：把任务中给出的画风串逐字放进 `art.stylePrompt`，不要删改 lockedTokens。
 - 角色卡：身份、外观、服装、配色、性格、说话方式、标志物。
 - 角色立绘提示词：为每个角色填写 `refPrompt` 与 `refSheet`。
+- 用户参考图：如存在 `source/character-refs/manifest.json`，读取清单并为匹配角色填写 `userRefs`。
 - 场景清单：`world.locations`，供分镜引用。
 
 ## 硬性规则
@@ -19,10 +20,18 @@
 - `art.letteringStyle` 固定为：`clean black comic lettering, rounded white speech bubbles with thin black outlines`。
 - 不要写分镜、不要写分格图像提示词。
 
+## 用户角色参考图
+
+- 任务中如出现 `source/character-refs/manifest.json`，先读取它。
+- `manifest.files[].file` 是项目内路径，只能把这些路径写入对应角色的 `userRefs`。
+- 按角色名或 id 匹配文件名；匹配不确定时留空，代码会按文件名兜底匹配。
+- `userRefs` 是身份参考，不代表要照搬原图构图、背景或画风。
+- `direct` 模式会直接使用原图；`restyle` 模式会以它为身份参考重绘设定图。
+
 ## 角色立绘提示词
 
 1. 每个角色必须有英文 `refPrompt`，并写入 `bible.json` 的 `cast[].refPrompt`。
-2. `refSheet` 固定写 `characters/<id>/ref.png`；系统会把 `refPrompt` 同步到 `characters/<id>/ref.prompt.txt`。
+2. `refSheet` 默认写 `characters/<id>/ref.png`；如果系统导入用户参考图，最终 `refSheet` 会按参考图格式自动映射。`refPrompt` 会同步到 `characters/<id>/ref.prompt.txt`。
 3. 三视图合一：正面全身 + 四分之三视角 + 面部特写，并排布局。
 4. 中性浅灰背景、均匀棚拍光，不要场景、不要道具干扰。
 5. 身份优先：发型、发色、瞳色、耳饰、服装轮廓、配色必须与 `canonical` 一致。

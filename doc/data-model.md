@@ -18,6 +18,7 @@
   "slug": "rain-on-the-roof",
   "title": "雨落屋檐",
   "titleSource": "user",
+  "characterRefs": { "mode": "restyle", "inputPath": "/path/to/refs", "manifest": "source/character-refs/manifest.json" },
   "createdAt": "2026-01-01T10:00:00.000Z",
   "updatedAt": "2026-01-01T10:42:00.000Z",
   "language": "zh",
@@ -216,7 +217,8 @@ idle | intake | script_analysis | script_gate | design | cast | cast_gate
       "distinctive": ["左耳银色小耳钉", "总把袖口拉过手掌"],
       "colors": { "hair": "#141418", "skin": "#f0d2c2", "accent": "#a33b3b" },
       "refSheet": "characters/lin/ref.png",
-      "refPrompt": "character reference sheet, full-body front view + three-quarter view + face close-up side by side, …"
+      "refPrompt": "character reference sheet, full-body front view + three-quarter view + face close-up side by side, …",
+      "userRefs": ["source/character-refs/01-lin.png"]
     }
   ]
 }

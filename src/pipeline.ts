@@ -5,6 +5,7 @@ import { createProjectImageWorkspace, createProviderFromConfig } from "./imagege
 import { validatePage, validateRefImages, validateRoleOutputs, roleTargets } from "./artifacts.ts";
 import { composeStylePrompt, type MangaConfig } from "./config.ts";
 import { buildStoryboardPlan } from "./page-plan.ts";
+import { applyCharacterRefsToBible, readCharacterRefManifest } from "./character-refs.ts";
 import { resolveProviderKey } from "./keys.ts";
 import { readJson, readText, resolveWithin, writeAtomic, writeJsonAtomic, ensureDir, fileExists, nowIso } from "./paths.ts";
 import { ensureProjectWebPreviews } from "./previews.ts";
@@ -75,6 +76,14 @@ function extractPanelKeys(issues: string[]): string[] {
 function emptyUsage(): RunUsage {
 	return { input: 0, output: 0, total: 0, cost: 0 };
 }
+
+/** Direct reference mode copies local files and never calls provider.generate(). */
+const directReferenceProvider: ImageProvider = {
+	id: "direct-reference",
+	async generate() {
+		throw new Error("direct character reference mode does not call image generation");
+	},
+};
 
 export class MangaPipeline {
 	readonly store: ProjectStore;
@@ -377,6 +386,7 @@ export class MangaPipeline {
 			});
 			if (!result.ok) return;
 			this.syncRefPromptFiles();
+			this.applyCharacterRefs();
 			this.store.transition("character_images");
 			this.ui.updateStatus(this.store);
 		});
@@ -392,12 +402,28 @@ export class MangaPipeline {
 		}
 	}
 
+	/** Attach imported user reference images to cast members by name/id. */
+	private applyCharacterRefs(): void {
+		const manifest = readCharacterRefManifest(this.store.root);
+		if (!manifest) return;
+		const bible = this.store.readBible();
+		if (!bible) return;
+		if (applyCharacterRefsToBible(bible, manifest)) {
+			writeJsonAtomic(join(this.store.root, "bible.json"), bible);
+		}
+	}
+
 	async runCharacterImages(force = false, onlyId?: string): Promise<void> {
 		this.beginStage("生成角色立绘");
 		await this.locked("code", async () => {
 			const run = this.store.beginRun("code", "character_images", { note: "角色立绘" });
 			try {
-				const client = this.getClient();
+				const manifest = readCharacterRefManifest(this.store.root);
+				const bible = this.store.readBible();
+				const cast = onlyId ? (bible?.cast ?? []).filter((member) => member.id === onlyId) : (bible?.cast ?? []);
+				const allDirect =
+					manifest?.mode === "direct" && cast.length > 0 && cast.every((member) => (member.userRefs?.length ?? 0) > 0);
+				const client = allDirect ? directReferenceProvider : this.getClient();
 				const result = await generateCharacterImages({
 					workspace: createProjectImageWorkspace(this.store),
 					config: this.config.image,
@@ -938,7 +964,14 @@ export class MangaPipeline {
 					"source/clarifications.md",
 				];
 			case "director":
-				return ["source/script.md", "source/analysis.json", "source/clarifications.md"];
+				return [
+					"source/script.md",
+					"source/analysis.json",
+					"source/clarifications.md",
+					...(fileExists(join(this.store.root, "source", "character-refs", "manifest.json"))
+						? ["source/character-refs/manifest.json"]
+						: []),
+				];
 			case "storyboard":
 				return ["bible.json", ...(pageId ? [`pages/${pageId}.json`] : [])];
 			case "repairer":

@@ -65,7 +65,8 @@ const ACTIONS = [
 ] as const;
 
 const HELP = `manga_team 动作：
-init / status / next / step / run_all / run_role / approve / revise
+init（支持 note / reference_path / reference_mode）
+status / next / step / run_all / run_role / approve / revise
 web / web_stop / web_status / regen_panel / prompt_panel / cast / qa
 style / provider / configure / set_auto / pause / resume / abort / doctor / open
 rollback / export / compress_images / list
@@ -109,6 +110,10 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 			page: Type.Optional(Type.String({ description: "regen_panel / prompt_panel 的页，如 page-001" })),
 			panel: Type.Optional(Type.String({ description: "regen_panel / prompt_panel 的格，如 panel-02" })),
 			note: Type.Optional(Type.String({ description: "init 的初始备注；regen_panel 的额外方向" })),
+			reference_path: Type.Optional(Type.String({ description: "init 的角色参考图文件或目录" })),
+			reference_mode: Type.Optional(
+				StringEnum(["direct", "restyle"], { description: "角色参考图用法：direct=直接使用，restyle=跟随画风重绘" }),
+			),
 			final: Type.Optional(Type.Boolean({ description: "regen_panel 是否用最终尺寸" })),
 			feedback: Type.Optional(Type.String({ description: "approve / revise 的意见" })),
 			host: Type.Optional(Type.String({ description: "web 绑定地址；默认 0.0.0.0（只读、无鉴权）" })),
@@ -140,6 +145,8 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 						title: params.title,
 						scriptPath: params.script_path,
 						note: params.note,
+						refs: params.reference_path,
+						refMode: params.reference_mode,
 						style: params.style,
 						adaptation: params.adaptation,
 					});

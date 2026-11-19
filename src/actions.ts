@@ -9,8 +9,9 @@ import { MangaPipeline, gateIdForPhase, isRole, roleForPhase, roleLabel, pipelin
 import type { ImageArchiveFormat } from "./export.ts";
 import { ensureProjectWebPreviews } from "./previews.ts";
 import { listProjects, ProjectStore } from "./state.ts";
+import { characterRefSettings, collectCharacterRefSources, importCharacterRefs } from "./character-refs.ts";
 import { readScriptInput } from "./script-input.ts";
-import { ADAPTATION_INFO, ADAPTATION_LEVELS, ROLE_IDS, type AdaptationLevel, type RoleId, type StylePreset, type StyleSelection } from "./types.ts";
+import { ADAPTATION_INFO, ADAPTATION_LEVELS, ROLE_IDS, type AdaptationLevel, type CharacterRefMode, type RoleId, type StylePreset, type StyleSelection } from "./types.ts";
 import { updateStatus, notify, phaseLabel, formatDuration, formatTokens } from "./ui.ts";
 import { startWebServer, type WebServerHandle } from "./web/server.ts";
 
@@ -151,12 +152,24 @@ function adaptationLabel(level: AdaptationLevel | undefined): string {
 	return level ? ADAPTATION_INFO[level].label : "未选择（首次剧本分析前询问）";
 }
 
+function refModeFromValue(value?: string): CharacterRefMode | undefined {
+	const text = value?.trim().toLowerCase();
+	if (!text) return undefined;
+	if (["direct", "直接用", "直接使用", "原图"].includes(text)) return "direct";
+	if (["restyle", "style", "跟随画风", "跟随画风改造", "改造", "重绘"].includes(text)) return "restyle";
+	return undefined;
+}
+
 export interface InitInput {
 	title?: string;
 	/** A single script file or a directory of text files. */
 	scriptPath?: string;
 	/** Optional user note saved as a reference for script analysis. */
 	note?: string;
+	/** Optional character reference image file or directory. */
+	refs?: string;
+	/** How imported character references are used: direct or restyle. */
+	refMode?: string;
 	style?: string;
 	customPrompt?: string;
 	ratio?: StyleSelection["ratio"];
@@ -191,6 +204,31 @@ export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput)
 	let note = input.note?.trim();
 	if (note === undefined && ctx.hasUI) {
 		note = (await ctx.ui.input("初始备注（可留空，会作为剧本分析参考）", ""))?.trim();
+	}
+
+	let refsPath = input.refs?.trim();
+	let hasRefs = refsPath !== undefined ? Boolean(refsPath) : false;
+	if (input.refs === undefined && ctx.hasUI) {
+		hasRefs = await ctx.ui.confirm("角色参考图", "是否有角色参考图？");
+	}
+	if (hasRefs && !refsPath && ctx.hasUI) {
+		refsPath = (await ctx.ui.input("角色参考图路径（单张图片或目录）", "./refs/ 或 ./character.png"))?.trim();
+	}
+	if (hasRefs && !refsPath) throw new Error("已选择角色参考图，但没有提供路径");
+	if (refsPath) refsPath = isAbsolute(refsPath) ? refsPath : resolve(ctx.cwd, refsPath);
+	const refSources = hasRefs ? collectCharacterRefSources(refsPath!) : [];
+	let refMode = refModeFromValue(input.refMode);
+	if (input.refMode && !refMode) throw new Error(`未知参考图改造程度：${input.refMode}`);
+	if (hasRefs) {
+		if (!refMode && ctx.hasUI) {
+			const choice = await ctx.ui.select("参考图改造程度", [
+				"直接使用（不重画）",
+				"跟随画风改造（重绘为设定图）",
+			]);
+			if (!choice) throw new Error("已取消参考图设置");
+			refMode = choice.startsWith("直接") ? "direct" : "restyle";
+		}
+		refMode ??= "restyle";
 	}
 
 	const config = app.baseConfig();
@@ -239,15 +277,32 @@ export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput)
 	if (note) {
 		writeAtomic(join(store.root, "source", "user-note.md"), `# 用户初始备注\n\n${note}\n`);
 	}
+	const manifest = refSources.length && refMode ? importCharacterRefs(store.root, refSources, refMode, refsPath!) : undefined;
+	if (manifest && refMode) {
+		store.project.characterRefs = characterRefSettings(refMode, refsPath!);
+		store.saveProject();
+	}
 	writeJsonAtomic(join(store.root, "source", "inputs.json"), {
 		inputPath: absPath,
 		fromDirectory: scriptInput.fromDirectory,
 		files: scriptInput.files,
 		...(note ? { note } : {}),
+		...(manifest && refMode
+			? {
+					characterRefs: {
+						mode: refMode,
+						inputPath: refsPath,
+						files: manifest.files,
+					},
+				}
+			: {}),
 	});
+	const refSummary = manifest
+		? `，角色参考图 ${manifest.files.length} 张（${refMode === "direct" ? "直接使用" : "跟随画风改造"}）`
+		: "";
 	notify(
 		ctx as never,
-		`已创建《${store.project.title}》（${store.project.style.label}，${store.project.style.ratio}，改编：${adaptationLabel(store.project.adaptation)}，${scriptInput.files.length} 个输入文件）。运行 /manga next 开始剧本分析。`,
+		`已创建《${store.project.title}》（${store.project.style.label}，${store.project.style.ratio}，改编：${adaptationLabel(store.project.adaptation)}，${scriptInput.files.length} 个输入文件${refSummary}）。运行 /manga next 开始剧本分析。`,
 		"info",
 	);
 	refreshStatus(ctx, app, store);
@@ -489,8 +544,9 @@ export function actionCast(ctx: ActionCtx, app: AppLike, options: { regen?: bool
 	const lines = [
 		`角色（${bible.cast.length}）：`,
 		...bible.cast.map((member) => {
-			const hasRef = existsSync(join(store.root, "characters", member.id, "ref.png"));
-			return `- ${member.id} · ${member.name} · ${member.role} · 立绘${hasRef ? "✔" : "✗"}`;
+			const rel = member.refSheet || `characters/${member.id}/ref.png`;
+			const hasRef = existsSync(join(store.root, rel));
+			return `- ${member.id} · ${member.name} · ${member.role} · 立绘${hasRef ? "✔" : "✗"}${rel}`;
 		}),
 		`目录：${join(store.root, "characters")}`,
 	];

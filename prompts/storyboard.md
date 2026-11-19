@@ -66,6 +66,7 @@ Lettering (must be drawn into the image): one rounded white speech bubble at top
 ## 参考图
 
 - `refs` **只放角色立绘**（按 cast 顺序）；只有角色出现在该格时才引用。
+- 必须使用 `bible.cast[].refSheet` 的实际路径，不要固定写成 `characters/<id>/ref.png`。
 - 上一格/连续性参考由出图阶段自动追加，不要写进 `refs`。
 - `prompt` 开头用英文逐条说明每张参考图的作用。
 - 连续性说明可以写进 prompt，但不要引用尚未生成的 PNG 路径。

@@ -6,6 +6,8 @@
  * `ProjectStore`, so it can be used from tests or another host without pulling
  * in state.ts, previews.ts or png-grayscale.ts.
  */
+import { copyFileSync } from "node:fs";
+import { extname } from "node:path";
 import type { CastMember, MangaPage, Panel } from "../types.ts";
 import { ImageGenError } from "./errors.ts";
 import { buildReferences, panelCacheKey, panelRelPath, parsePanelKey } from "./references.ts";
@@ -21,6 +23,18 @@ function characterPrompt(workspace: ImageGenWorkspace, member: CastMember): stri
 	return workspace.readText(`characters/${member.id}/ref.prompt.txt`)?.trim() ?? "";
 }
 
+function characterRefMode(workspace: ImageGenWorkspace): "direct" | "restyle" | undefined {
+	const text = workspace.readText("source/character-refs/manifest.json");
+	if (!text) return undefined;
+	try {
+		const parsed = JSON.parse(text) as { mode?: unknown };
+		if (parsed.mode === "direct" || parsed.mode === "restyle") return parsed.mode;
+	} catch {
+		// A broken manifest is treated as no user references.
+	}
+	return undefined;
+}
+
 export async function generateCharacterImages(
 	options: ImageStageOptions,
 ): Promise<{ done: number; skipped: number; failed: number }> {
@@ -34,18 +48,43 @@ export async function generateCharacterImages(
 	const cast = options.onlyId ? bible.cast.filter((member) => member.id === options.onlyId) : bible.cast;
 	if (options.onlyId && cast.length === 0) throw new Error(`找不到角色: ${options.onlyId}`);
 	const total = cast.length;
+	const mode = characterRefMode(workspace);
 
 	for (const [index, member] of cast.entries()) {
 		if (signal?.aborted) throw new Error("已取消");
-		const rel = `characters/${member.id}/ref.png`;
+		const userRefs = (member.userRefs ?? []).filter((ref) => workspace.imageExists(ref));
+		const directExt = mode === "direct" && userRefs[0] ? extname(userRefs[0]).toLowerCase() || ".png" : ".png";
+		const rel = member.refSheet || `characters/${member.id}/ref${directExt}`;
 		const label = member.name || member.id;
 		options.onProgress?.({ kind: "char-start", label, index: index + 1, total });
+
+		// Direct mode: use the user's image as-is, without calling the model.
+		if (mode === "direct" && userRefs.length > 0) {
+			try {
+				const abs = workspace.prepareImage(rel, config.keepVersions);
+				copyFileSync(workspace.imageAbsPath(userRefs[0]), abs);
+				workspace.writeSourceUrl(rel, undefined);
+				done++;
+				options.onProgress?.({ kind: "char-done", label, index: index + 1, total });
+			} catch (error) {
+				failed++;
+				options.onProgress?.({
+					kind: "char-fail",
+					label,
+					index: index + 1,
+					total,
+					error: messageOf(error),
+				});
+			}
+			continue;
+		}
 
 		if (!options.force && workspace.imageExists(rel)) {
 			skipped++;
 			options.onProgress?.({ kind: "char-skip", label, index: index + 1, total });
 			continue;
 		}
+
 		const prompt = characterPrompt(workspace, member);
 		if (!prompt) {
 			failed++;
@@ -54,11 +93,16 @@ export async function generateCharacterImages(
 		}
 		try {
 			const abs = workspace.prepareImage(rel, config.keepVersions);
+			const refs = userRefs.length > 0 ? buildReferences(workspace, userRefs, config.maxRefs) : [];
+			const basePrompt = refs.length
+				? `Use the provided character reference image only for identity (face, hair, outfit, distinguishing features). Redraw this character as a neutral reference sheet and follow the requested art style. ${prompt}`
+				: prompt;
 			const result = await provider.generate({
-				prompt: enforceStylePrompt(prompt, style),
+				prompt: enforceStylePrompt(basePrompt, style),
 				negative: enforceStyleNegative(undefined, style),
 				size: config.draftSize,
 				ratio: style.ratio,
+				refs,
 				outPath: abs,
 				signal,
 			});

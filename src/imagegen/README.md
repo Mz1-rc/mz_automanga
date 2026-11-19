@@ -112,6 +112,11 @@ generatePanelImages(options: ImageStageOptions): Promise<{ done; skipped; failed
 regeneratePanel(options: ImageStageOptions & { key; note?; promptOverride? }): Promise<ImageGenerateResult>
 ```
 
+角色立绘阶段会额外识别 `source/character-refs/manifest.json`：
+
+- `mode === "direct"`：把 `bible.cast[].userRefs[0]` 直接复制到 `refSheet`，不调用 provider；
+- `mode === "restyle"`：把 `userRefs` 作为身份参考传给 provider，按当前画风重绘。
+
 `ImageStageOptions`：
 
 ```ts

@@ -98,6 +98,7 @@ function readingList(role: RoleId, root: string, options: TaskPromptOptions): st
 			break;
 		case "director":
 			add("source/scenes.json", "场景清单（便于快速浏览）");
+			add("source/character-refs/manifest.json", "用户角色参考图清单（为匹配角色填写 userRefs）");
 			break;
 		case "storyboard": {
 			const prev = (options.pageIndex ?? 1) - 1;
@@ -168,7 +169,8 @@ function schemaBible(): string {
       "personality": "string", "speechStyle": "string", "distinctive": ["string"],
       "colors": { "hair": "#rrggbb", "skin": "#rrggbb", "accent": "#rrggbb" },
       "refSheet": "characters/<id>/ref.png",
-      "refPrompt": "English character reference sheet prompt, three views, identity only" }
+      "refPrompt": "English character reference sheet prompt, three views, identity only",
+      "userRefs": ["source/character-refs/<file> (optional)"] }
   ],
   "assumptions": ["string"]
 }`;
@@ -197,7 +199,7 @@ function schemaPage(): string {
       "lettering": { "instructions": "English lettering instruction（由分镜师一并填写）" },
       "prompt": "final image prompt（由分镜师一并填写）",
       "negative": "garbled characters, misspelled characters, extra text, watermark, signature, blurry text",
-      "refs": ["characters/<id>/ref.png"],  // 只放角色立绘；连续性参考由出图阶段处理
+      "refs": ["<bible.cast[].refSheet>"],  // 只放角色立绘（必须使用 refSheet 的实际路径）；连续性参考由出图阶段处理
       "continuityFrom": null,
       "promptOverride": null,
       "image": { "status": "pending" },
@@ -262,9 +264,10 @@ function roleTask(options: TaskPromptOptions): string {
 				"4. 角色只能来自剧本与分析，不得新增主线人物；配角最多 2 个。",
 				"5. art.stylePrompt 必须逐字包含任务中给出的“画风锁定串”（含 lettering 与禁止项）。",
 				"6. canonical 用英文书写，60–120 词，包含年龄、性别、发型发色、瞳色、体型、默认服装、标志物。",
-				"7. 为每个角色写 refPrompt（英文；三视图：正面全身 + 四分之三 + 面部特写；中性灰背景；身份一致性优先），并填写 refSheet：characters/<id>/ref.png。",
+				"7. 为每个角色写 refPrompt（英文；三视图：正面全身 + 四分之三 + 面部特写；中性灰背景；身份一致性优先），并填写 refSheet：默认 characters/<id>/ref.png；有用户参考图时系统会按格式映射最终路径。",
 				"8. refPrompt 模板：character reference sheet, full-body front view + three-quarter view + face close-up side by side, <canonical>, <default outfit>, neutral light grey background, even studio lighting, character design sheet, consistent proportions, <style base prompt>, no watermark, no text other than the specified lettering",
 				"9. 立绘提示词禁止出现对白文字；参考图只用于身份，不画气泡。refPrompt 必须写在 bible.json 的 cast[] 中，系统会同步到 characters/<id>/ref.prompt.txt。",
+				"10. 如果存在 source/character-refs/manifest.json，读取清单并把匹配的文件写入对应角色的 userRefs；只能引用清单中的文件，匹配不确定时留空，系统会按文件名兜底匹配。",
 				"",
 				"## 输出契约",
 				"```json",
@@ -306,7 +309,7 @@ function roleTask(options: TaskPromptOptions): string {
 				"9. 拼接顺序：shot + camera → 角色 canonical + outfit + pose + expression → action → 场景/时间 → 光线 → 构图与留白 → Lettering → stylePrompt（逐字）→ Avoid 句。",
 				"10. Lettering 必须逐字包含每条 dialogue.text（含标点），并写明气泡位置、形状、尾巴指向、文字颜色与字体风格；位置必须与 bubble 字段一致。",
 				"11. 文字不设硬性字数上限；每条 dialogue.text 都必须完整进入 lettering，不得删字或改写。",
-				"12. refs 只列角色立绘（按 cast 顺序）；上一格/连续性参考由出图阶段自动追加，不要写进 refs。prompt 开头用英文说明每张参考图的作用。",
+				"12. refs 只列角色立绘（按 cast 顺序，必须使用 bible.cast[].refSheet 的实际路径）；上一格/连续性参考由出图阶段自动追加，不要写进 refs。prompt 开头用英文说明每张参考图的作用。",
 				"13. prompt 末尾必须出现：no text other than the specified lettering。不要改写画风锁定串，也不要把锁定词写进 Avoid 段。",
 				...planLines,
 				"",

@@ -14,6 +14,7 @@
 | `init-dir.test.ts` | 目录输入创建项目、标题取目录名、`source/inputs.json` 清单 |
 | `artifacts.test.ts` | 白名单、禁止目标、JSON 校验、原子写、快照；analysis/bible/page schema；lettering 原文/气泡 |
 | `title-plan.test.ts` | 自动标题只读取有界预览；分镜计划按场景/节拍/篇幅收紧，避免超估页数生成重放页 |
+| `character-refs.test.ts` | 参考图导入、文件名匹配、direct 直接复制、restyle 作为身份参考 |
 | `agnes.test.ts` | payload 结构、URL/b64 两条路径、429 退避、401/400 中止、超时、下载字节上限、流式写入 |
 | `web.test.ts` | 路由、静态资源与 MIME、路径穿越、SSE 首帧、默认 0.0.0.0、无 token、POST/PUT/PATCH/DELETE/OPTIONS 均 405、媒体 Range、拒绝端口 0/占用端口；前端每格编号 `页号/图片号` |
 | `imagegen.test.ts` | 假 provider + 内存 workspace 跑分镜出图；provider 注册表与未知 provider 错误 |

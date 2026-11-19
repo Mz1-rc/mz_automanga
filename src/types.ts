@@ -166,12 +166,22 @@ export interface MangaConfig {
 
 export type ProjectTitleSource = "user" | "auto" | "directory";
 
+export type CharacterRefMode = "direct" | "restyle";
+
+export interface CharacterRefSettings {
+	mode: CharacterRefMode;
+	inputPath: string;
+	manifest: string;
+}
+
 export interface MangaProject {
 	schemaVersion: 1;
 	slug: string;
 	title: string;
 	/** How the title was chosen. Auto titles may be replaced by the analysis suggestion. */
 	titleSource?: ProjectTitleSource;
+	/** User-provided character reference images and how they should be used. */
+	characterRefs?: CharacterRefSettings;
 	createdAt: string;
 	updatedAt: string;
 	language: string;
@@ -303,6 +313,8 @@ export interface CastMember {
 	colors?: Record<string, string>;
 	refSheet?: string;
 	refPrompt?: string;
+	/** Project-relative user reference images under source/character-refs/. */
+	userRefs?: string[];
 }
 
 export interface BibleArt {
