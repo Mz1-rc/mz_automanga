@@ -584,15 +584,28 @@ export function actionQa(ctx: ActionCtx, app: AppLike): string {
 	return startBackground(ctx, app, "结构审校", (pipeline) => pipeline.runQa());
 }
 
-export function actionAuto(ctx: ActionCtx, app: AppLike, on: boolean): string {
-	const { store } = app.ensure(ctx.cwd);
+function setAutoGates(store: ProjectStore, on: boolean): void {
 	store.project.gates = on
 		? { script: "off", cast: "off", storyboard: "off", final: "off" }
 		: { script: "auto", cast: "always", storyboard: "always", final: "always" };
 	store.saveProject();
+}
+
+export function actionAuto(ctx: ActionCtx, app: AppLike, on: boolean): string {
+	const { store } = app.ensure(ctx.cwd);
+	setAutoGates(store, on);
 	return on
 		? "已开启全自动：闸门全部跳过（剧本 blocker 仍会按假设记录）。使用 /manga run-all 跑完。"
 		: "已关闭全自动：恢复默认闸门。";
+}
+
+/** Equivalent to `/manga auto on` followed by `/manga run-all`, in one background job. */
+export function actionAutoRun(ctx: ActionCtx, app: AppLike): string {
+	const { store } = app.ensure(ctx.cwd);
+	// Check before mutating gates so a busy app does not leave auto mode half-enabled.
+	if (app.isBusy()) throw new Error(app.busyMessage());
+	setAutoGates(store, true);
+	return `已开启全自动（闸门全部跳过）。\n${startBackground(ctx, app, "全自动运行", (pipeline) => pipeline.runAll())}`;
 }
 
 // ---------------------------------------------------------------------------

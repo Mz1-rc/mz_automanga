@@ -91,7 +91,7 @@ init
  → [final_gate] → done
 ```
 
-方括号为人工闸门。`/manga auto on` 可跳过闸门（仍做校验），`/manga run-all` 跑到结束。
+方括号为人工闸门。`/manga auto on` 可跳过闸门（仍做校验），`/manga run-all` 跑到结束；`/manga auto-run` 等价于连续执行这两条命令。
 
 分镜阶段会先用场景数、节拍数和原文篇幅生成全篇页计划：即使分析师把 `pageEstimate` 估得过高，也会收紧到内容能支撑的页数，并把每页限定到独立的节拍区间，避免后半段用“回响/重放/总结”页重复剧情。
 
@@ -102,7 +102,8 @@ init
 | `/manga init [--script <文件\|目录>] [--title <书名>] [--note <初始备注>] [--refs <图片\|目录>] [--ref-mode direct\|restyle] [--style <preset>] [--adaptation strict\|balanced\|free]` | 新建项目；无参数时进入交互；初始备注供剧本分析参考；`--refs` 导入角色参考图，`direct` 直接使用，`restyle` 跟随画风重绘 |
 | `/manga status` | 阶段、页/格、闸门、当前绘制模型、Web 地址 |
 | `/manga next` / `/manga step` | 后台推进下一阶段 |
-| `/manga run-all` | 后台跑完剩余流程 |
+| `/manga run-all` | 后台跑完剩余流程（遇到闸门会停） |
+| `/manga auto-run` | 开启全自动并后台跑完剩余流程（= `auto on` + `run-all`） |
 | `/manga run <role>` | 运行指定角色（`script_analyst` / `director` / `storyboard` / `editor` / `repairer`） |
 | `/manga approve [意见]` | 通过当前闸门并继续 |
 | `/manga revise <意见>` | 按意见重做当前闸门产物 |
@@ -325,7 +326,7 @@ Ark 内置可选模型：`doubao-seedream-5-5-261028`（默认）、`doubao-seed
 ## 测试
 
 ```bash
-node --experimental-strip-types --test tests/*.test.ts   # 62 个用例
+node --experimental-strip-types --test tests/*.test.ts   # 63 个用例
 ```
 
 测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering/空镜校验、角色参考图导入与 direct/restyle、改编等级与提示词注入、黑白画风颜色锁与灰度兜底、Agnes/Ark 重试与流式下载上限、图片压缩到 <500 KB、Web 只读方法白名单/默认 0.0.0.0/SSE/Range/中文路径/人设图、ZIP/CBZ 导出、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过、图像模块 provider/workspace 解耦、Ark payload/尺寸映射、模型选择与状态显示、错误分层。

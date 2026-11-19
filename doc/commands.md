@@ -29,6 +29,7 @@
 | `/manga provider [id] [--model <model>]` | 切换图像模型提供方：`agnes`（免费默认）/ `ark`（付费）；无 id 时交互选择，切换 `ark` 时再选 Seedream 模型 |
 | `/manga config` | 查看有效配置 |
 | `/manga auto on\|off` | 全自动模式（跳过闸门，仍做校验） |
+| `/manga auto-run` | 开启全自动并后台跑完剩余流程（等价于 `auto on` + `run-all`） |
 | `/manga pause` / `/manga resume` | 暂停 / 恢复 |
 | `/manga abort` | 中止当前后台任务（也可 Esc） |
 | `/manga doctor` | 检查状态、文件、锁、未完成运行 |
@@ -55,7 +56,7 @@ pi.registerTool({
     "Long-running manga_team actions return immediately after starting a background job; use status to inspect progress.",
     "After starting a background job, do not start another manga_team action in the same turn; report the job and wait.",
     "When manga_team reports a gate (script/cast/storyboard/final), ask the user to confirm before advancing.",
-    "Use run_all or set_auto only when the user explicitly asks for fully automatic operation.",
+    "Use auto_run (or set_auto plus run_all) only when the user explicitly asks for fully automatic operation.",
   ],
   parameters: Type.Object({ action: StringEnum(ACTIONS), /* project, page, panel, note, … */ }),
   executionMode: "sequential",
@@ -63,7 +64,7 @@ pi.registerTool({
 });
 ```
 
-Actions：`init | next | step | run_role | approve | revise | status | web | regen_panel | style | provider | configure | abort | doctor | open | export | compress_images | run_all | set_auto`。`export_format` 默认为 `zip`，可设为 `cbz`。
+Actions：`init | next | step | run_role | approve | revise | status | web | regen_panel | style | provider | configure | abort | doctor | open | export | compress_images | run_all | auto_run | set_auto`。`export_format` 默认为 `zip`，可设为 `cbz`。
 
 ### 10.3 后台任务（单飞）
 

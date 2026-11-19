@@ -3,6 +3,7 @@ import {
 	actionAbort,
 	actionApprove,
 	actionAuto,
+	actionAutoRun,
 	actionCast,
 	actionCompress,
 	actionConfig,
@@ -90,7 +91,8 @@ const HELP = `mz_automanga · 多 Agent 漫画流水线
   /manga status
   /manga next              推进下一阶段（后台）
   /manga step              只执行下一步（后台）
-  /manga run-all           全自动跑完（跳过闸门，仍做校验）
+  /manga run-all           跑完剩余流程（遇到闸门会停）
+  /manga auto-run          开启全自动并跑完剩余流程（= auto on + run-all）
   /manga run <role>        运行指定角色
   /manga approve [意见]    通过当前闸门
   /manga revise <意见>     按意见重做当前闸门产物
@@ -158,6 +160,9 @@ export async function handleMangaCommand(
 				return;
 			case "run-all":
 				ctx.ui.notify(actionRunAll(ctx, app), "info");
+				return;
+			case "auto-run":
+				ctx.ui.notify(actionAutoRun(ctx, app), "info");
 				return;
 			case "run":
 				if (!rest) throw new Error("用法：/manga run <role>");
@@ -264,6 +269,7 @@ export function registerMangaCommand(pi: ExtensionAPI, app: MangaApp): void {
 				"next",
 				"step",
 				"run-all",
+				"auto-run",
 				"run",
 				"approve",
 				"revise",

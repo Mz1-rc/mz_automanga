@@ -5,6 +5,7 @@ import {
 	actionAbort,
 	actionApprove,
 	actionAuto,
+	actionAutoRun,
 	actionCast,
 	actionCompress,
 	actionDoctor,
@@ -38,6 +39,7 @@ const ACTIONS = [
 	"next",
 	"step",
 	"run_all",
+	"auto_run",
 	"run_role",
 	"approve",
 	"revise",
@@ -66,7 +68,7 @@ const ACTIONS = [
 
 const HELP = `manga_team 动作：
 init（支持 note / reference_path / reference_mode）
-status / next / step / run_all / run_role / approve / revise
+status / next / step / run_all / auto_run / run_role / approve / revise
 web / web_stop / web_status / regen_panel / prompt_panel / cast / qa
 style / provider / configure / set_auto / pause / resume / abort / doctor / open
 rollback / export / compress_images / list
@@ -91,7 +93,7 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 			"Long-running manga_team actions return immediately after starting a background job; use status to inspect progress.",
 			"After starting a background job, do not start another manga_team action in the same turn; report the job and wait.",
 			"When manga_team reports a gate (script/cast/storyboard/final), ask the user to confirm before advancing.",
-			"Use set_auto and run_all only when the user explicitly asks for fully automatic operation.",
+			"Use auto_run (or set_auto plus run_all) only when the user explicitly asks for fully automatic operation.",
 			"When the user wants different art, use style before generating images; switching style invalidates cast, prompts and panels.",
 		],
 		parameters: Type.Object({
@@ -166,6 +168,8 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 					return text(actionStep(actionCtx, app));
 				case "run_all":
 					return text(actionRunAll(actionCtx, app));
+				case "auto_run":
+					return text(actionAutoRun(actionCtx, app));
 				case "run_role": {
 					if (!params.role) throw new Error("run_role 需要 role");
 					return text(actionRunRole(actionCtx, app, params.role));
