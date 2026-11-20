@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_CONFIG, DEFAULT_WEB, normalizeConfig } from "../src/config.ts";
-import { ensureProjectWebPreviews } from "../src/previews.ts";
+import { ensureProjectWebPreviews, ensureWebPreview } from "../src/previews.ts";
 import { freePort, makeTestProject, writeNoisyPng, writeTinyPng } from "./helpers.ts";
 import { startWebServer } from "../src/web/server.ts";
 
@@ -196,6 +196,16 @@ test("web media serves a compressed preview under 500 KB", async () => {
 	} finally {
 		await handle.close();
 	}
+});
+
+test("web previews skip non-png sources instead of reporting compression failures", () => {
+	const { store } = makeTestProject();
+	const rel = "characters/lin/ref.jpg";
+	mkdirSync(join(store.root, "characters", "lin"), { recursive: true });
+	writeFileSync(join(store.root, rel), Buffer.alloc(600_000, 0x7f));
+	const result = ensureWebPreview(store.root, rel);
+	assert.equal(result.status, "skipped");
+	assert.equal(result.reason, "unsupported-format");
 });
 
 test("server refuses port 0 and busy ports instead of picking another port", async () => {

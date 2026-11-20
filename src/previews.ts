@@ -1,5 +1,5 @@
 import { renameSync, statSync, unlinkSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, extname } from "node:path";
 import { ensureDir, resolveWithin } from "./paths.ts";
 import type { ProjectStore } from "./state.ts";
 import { compressPngToSize } from "./util/image-compress.ts";
@@ -58,6 +58,11 @@ export function ensureWebPreview(projectRoot: string, rel: string): PreviewResul
 	}
 	if (sourceStat.size <= WEB_PREVIEW_MAX_BYTES) {
 		return { status: "skipped", rel, bytes: sourceStat.size, sourceBytes: sourceStat.size, reason: "source-small" };
+	}
+	// The compressor only decodes PNG. Direct-mode references may be JPEG/WebP;
+	// those are served as-is instead of being reported as compression failures.
+	if (extname(rel).toLowerCase() !== ".png") {
+		return { status: "skipped", rel, bytes: sourceStat.size, sourceBytes: sourceStat.size, reason: "unsupported-format" };
 	}
 	if (webPreviewIsFresh(projectRoot, rel)) {
 		let bytes = 0;

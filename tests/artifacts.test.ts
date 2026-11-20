@@ -166,6 +166,34 @@ test("validatePage enforces bubble and lettering text without a character limit"
 	assert.ok(badPrompt.issues.some((issue) => issue.includes("未包含 dialogue")));
 });
 
+test("validatePage requires character sheets under characters/ and rejects source refs", () => {
+	const { store } = makeTestProject();
+	mkdirSync(join(store.root, "characters", "lin"), { recursive: true });
+	writeFileSync(join(store.root, "characters", "lin", "ref.png"), tinyPng());
+	const sourceRefs = page(true);
+	for (const panel of sourceRefs.panels) panel.refs = ["source/character-refs/01-lin.jpg"];
+	const source = validatePage(sourceRefs, {
+		bible: bible(),
+		stylePrompt: "",
+		stage: "prompts",
+		projectRoot: store.root,
+	});
+	assert.equal(source.ok, false);
+	assert.ok(source.issues.some((issue) => issue.includes("必须是 characters/")));
+	assert.ok(source.issues.some((issue) => issue.includes("缺少角色 lin 的立绘")));
+
+	const missing = page(true);
+	for (const panel of missing.panels) panel.refs = [];
+	const missingResult = validatePage(missing, {
+		bible: bible(),
+		stylePrompt: "",
+		stage: "prompts",
+		projectRoot: store.root,
+	});
+	assert.equal(missingResult.ok, false);
+	assert.ok(missingResult.issues.some((issue) => issue.includes("缺少角色 lin 的立绘")));
+});
+
 test("validateRefPrompts accepts inline or file prompts", () => {
 	const { store } = makeTestProject();
 	assert.equal(validateRefPrompts(bible(), store.root).ok, true);

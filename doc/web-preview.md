@@ -16,7 +16,7 @@
 - **端口必须手动指定**：启动时必须提供 `--port`，或在配置中显式设置 `web.port`（默认 0 表示未配置）。**不会随机分配，也不会在占用时自动加 1**；未指定或被占用直接报错并提示换端口。
 - **无 token、无鉴权**：不生成 token、不写 `web-token.txt`、不设置鉴权 cookie；旧配置里的 `web.token` 在加载时自动清理。
 - 启动提示会明确写出“只读、无鉴权、同一网络可访问”；README 同时提示仅在可信网络使用，或显式绑定回环地址。
-- `/manga web start` 在监听端口前调用 `ensureProjectWebPreviews(store)`，把漫画页和人设图压缩到 `.web/`（每张 <500,000 字节）。HTTP handler 只读取该缓存，压缩本身不在请求路径中。
+- `/manga web start` 在监听端口前调用 `ensureProjectWebPreviews(store)`，把漫画页和人设图压缩到 `.web/`（PNG 每张 <500,000 字节）。HTTP handler 只读取该缓存，压缩本身不在请求路径中。JPEG/WebP（例如 direct 模式导入的参考图）没有内置解码器，不做重编码，按原图返回。
 - `session_shutdown` → `server.close()`；`server.unref()` 不阻塞退出。
 
 ### 9.2 路由（全部只读，只服务图片）
@@ -29,7 +29,7 @@
 | GET | `/assets/*` | 包内静态资源（`assets/js/*.js`、`assets/css/*.css`）；仅允许白名单扩展名，拒绝路径穿越与符号链接逃逸 |
 | GET | `/api/projects` | 项目列表（slug、标题、页数、完成数） |
 | GET | `/api/project?p=<slug>` | 项目摘要 + 每页图片清单（`page/panel/file/status`）+ 角色人设清单（`characters[]`） |
-| GET | `/media/<slug>/<relpath>` | 图片，支持 Range；原图 >500,000 字节时优先返回 `.web/` 中新鲜且 ≤500,000 字节的压缩副本 |
+| GET | `/media/<slug>/<relpath>` | 图片，支持 Range；PNG 原图 >500,000 字节时优先返回 `.web/` 中新鲜且 ≤500,000 字节的压缩副本；JPEG/WebP 直接返回原图 |
 | GET | `/api/events?p=<slug>` | SSE：`snapshot` / `ping` |
 
 **框架层只读约束（硬边界）：**

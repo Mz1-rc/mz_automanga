@@ -8,7 +8,7 @@
  */
 import { copyFileSync } from "node:fs";
 import { extname } from "node:path";
-import type { CastMember, MangaPage, Panel } from "../types.ts";
+import type { Bible, CastMember, MangaPage, Panel } from "../types.ts";
 import { ImageGenError } from "./errors.ts";
 import { buildReferences, panelCacheKey, panelRelPath, parsePanelKey } from "./references.ts";
 import { enforceStyleNegative, enforceStylePrompt } from "./style.ts";
@@ -33,6 +33,55 @@ function characterRefMode(workspace: ImageGenWorkspace): "direct" | "restyle" | 
 		// A broken manifest is treated as no user references.
 	}
 	return undefined;
+}
+
+function normalizeRef(rel: string): string {
+	return rel.replaceAll("\\", "/").trim();
+}
+
+/**
+ * Resolve the character sheets a panel must use before generation.
+ *
+ * `panel.refs` is the storyboard's declaration, while `bible.cast[].refSheet`
+ * is the authoritative file for each character. Missing sheets are reported as
+ * errors instead of being silently dropped, and character sheets are added even
+ * when the storyboard forgot to list them.
+ */
+function resolvePanelRefs(
+	workspace: ImageGenWorkspace,
+	bible: Bible,
+	panel: Panel,
+): { rels: string[]; issues: string[] } {
+	const issues = new Set<string>();
+	const rels: string[] = [];
+	const add = (rel: string) => {
+		if (!rels.includes(rel)) rels.push(rel);
+	};
+
+	for (const raw of panel.refs ?? []) {
+		const ref = normalizeRef(String(raw));
+		if (!ref) continue;
+		// Imported user refs live under source/character-refs/ but panels must
+		// reference the final character sheet.
+		if (!ref.startsWith("characters/")) continue;
+		if (!workspace.imageExists(ref)) {
+			issues.add(`参考图不存在: ${ref}`);
+			continue;
+		}
+		add(ref);
+	}
+
+	for (const character of panel.characters ?? []) {
+		const cast = bible.cast.find((member) => member.id === character.id);
+		const rel = normalizeRef(cast?.refSheet || `characters/${character.id}/ref.png`);
+		if (!workspace.imageExists(rel)) {
+			issues.add(`角色 ${character.id} 的立绘不存在: ${rel}`);
+			continue;
+		}
+		add(rel);
+	}
+
+	return { rels, issues: [...issues] };
 }
 
 export async function generateCharacterImages(
@@ -64,6 +113,7 @@ export async function generateCharacterImages(
 				const abs = workspace.prepareImage(rel, config.keepVersions);
 				copyFileSync(workspace.imageAbsPath(userRefs[0]), abs);
 				workspace.writeSourceUrl(rel, undefined);
+				workspace.ensurePreview?.(rel);
 				done++;
 				options.onProgress?.({ kind: "char-done", label, index: index + 1, total });
 			} catch (error) {
@@ -178,12 +228,19 @@ export async function generatePanelImages(
 			continue;
 		}
 
-		const refRels: string[] = [];
-		for (const member of panel.characters) {
-			const cast = bible.cast.find((c) => c.id === member.id);
-			const refRel = cast?.refSheet || `characters/${member.id}/ref.png`;
-			if (!refRels.includes(refRel) && workspace.imageExists(refRel)) refRels.push(refRel);
+		const { rels: characterRefs, issues: refIssues } = resolvePanelRefs(workspace, bible, panel);
+		if (refIssues.length > 0) {
+			const error = refIssues.join("；");
+			panel.image = { ...(panel.image ?? { status: "pending" }), status: "failed", error };
+			failed++;
+			failures.push(key);
+			workspace.writePage(page);
+			workspace.touch();
+			options.onProgress?.({ kind: "panel-fail", label, index: index + 1, total, error });
+			continue;
 		}
+
+		const refRels: string[] = [...characterRefs];
 		if (config.usePreviousPanel && panel.continuityFrom !== null) {
 			const continuity = panel.continuityFrom || previousPanelRel(workspace, pageIndex, panelIndex + 1);
 			if (continuity) {
@@ -285,12 +342,9 @@ export async function regeneratePanel(
 	const negative = enforceStyleNegative(panel.negative, workspace.style);
 	const bible = workspace.readBible();
 	if (!bible) throw new Error("bible.json 缺失");
-	const refRels: string[] = [];
-	for (const member of panel.characters) {
-		const cast = bible.cast.find((c) => c.id === member.id);
-		const refRel = cast?.refSheet || `characters/${member.id}/ref.png`;
-		if (!refRels.includes(refRel)) refRels.push(refRel);
-	}
+	const resolved = resolvePanelRefs(workspace, bible, panel);
+	if (resolved.issues.length > 0) throw new Error(resolved.issues.join("；"));
+	const refRels: string[] = [...resolved.rels];
 	const refs = buildReferences(workspace, refRels, config.maxRefs);
 	const rel = panelRelPath(parsed.pageIndex, parsed.panelIndex);
 	const abs = workspace.prepareImage(rel, config.keepVersions);

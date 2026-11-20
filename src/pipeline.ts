@@ -437,7 +437,13 @@ export class MangaPipeline {
 				});
 				this.store.finishRun(run.id, { status: "success" });
 				this.ui.notify(`角色立绘：成功 ${result.done}，跳过 ${result.skipped}，失败 ${result.failed}。`, result.failed ? "warning" : "info");
-				this.store.transition("cast_gate");
+				// The stage normally runs at character_images. Manual regen (`/manga cast --regen`)
+				// can happen later; do not force an illegal transition there.
+				if (["design", "cast", "character_images"].includes(this.store.phase)) {
+					this.store.transition("cast_gate");
+				} else {
+					this.ui.notify("立绘已更新。含这些角色的已有画面需要 /manga regen 或重跑出图阶段。", "warning");
+				}
 				this.ui.updateStatus(this.store);
 			} catch (error) {
 				this.store.finishRun(run.id, { status: this.signal?.aborted ? "aborted" : "error", error: messageOf(error) });
@@ -587,6 +593,20 @@ export class MangaPipeline {
 	// QA / repair
 	// ---------------------------------------------------------------------
 
+	/** Send missing character sheets back to character_images once, then stop. */
+	private recoverMissingRefs(prefix: string, issues: string[]): void {
+		const message = `${prefix}：${issues.slice(0, 3).join("；")}`;
+		const attempts = this.store.state.runs.filter((item) => item.phase === "character_images").length;
+		if (attempts >= 2) {
+			this.ui.notify(`${message}（已自动重跑过立绘，停止并等待手动修复）`, "error");
+			this.store.markError(message);
+		} else {
+			this.ui.notify(`${message}，退回立绘阶段`, "error");
+			this.store.transition("character_images");
+		}
+		this.ui.updateStatus(this.store);
+	}
+
 	async runQa(): Promise<void> {
 		this.beginStage("审校");
 		await this.locked("code", async () => {
@@ -597,6 +617,11 @@ export class MangaPipeline {
 				writeAtomic(join(this.store.root, "qa", "report.md"), renderQaMarkdown(report));
 				ensureDir(join(this.store.root, "qa"));
 				this.store.finishRun(run.id, { status: "success" });
+				const refCheck = validateRefImages(this.store.readBible(), this.store.root);
+				if (refCheck.issues.length > 0) {
+					this.recoverMissingRefs("审校发现角色立绘缺失", refCheck.issues);
+					return;
+				}
 				const repairRuns = this.store.state.runs.filter((item) => item.role === "repairer").length;
 				if (report.repairTargets.length > 0 && repairRuns < this.config.qa.repairRounds) {
 					this.ui.notify(`审校发现 ${report.repairTargets.length} 个问题，进入修复。`, "warning");
@@ -788,6 +813,12 @@ export class MangaPipeline {
 		await this.locked("code", async () => {
 			const run = this.store.beginRun("code", "build", { note: "构建与导出" });
 			try {
+				const refCheck = validateRefImages(this.store.readBible(), this.store.root);
+				if (refCheck.issues.length > 0) {
+					this.store.finishRun(run.id, { status: "success", note: "角色立绘缺失，退回立绘阶段" });
+					this.recoverMissingRefs("构建前检查发现角色立绘缺失", refCheck.issues);
+					return;
+				}
 				this.store.refreshStats();
 				if (this.store.state.stats.images === 0) {
 					this.store.finishRun(run.id, { status: "success", note: "没有成功画面，跳过导出" });

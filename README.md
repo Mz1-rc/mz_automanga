@@ -227,7 +227,7 @@ source/character-refs/manifest.json
 
 | 模式 | 行为 |
 |---|---|
-| `direct` | 不调用图像模型，直接把用户图复制为角色立绘；分镜引用实际 `refSheet` 路径 |
+| `direct` | 不调用图像模型，直接把用户图复制为角色立绘（保留原格式：png/jpg/jpeg/webp）；分镜引用实际 `refSheet` 路径 |
 | `restyle` | 把用户图作为身份参考，按当前画风重新生成角色设定图 |
 
 导演会读取清单，把匹配的参考图写入角色的 `userRefs`；匹配不确定时由代码按文件名与角色名/id 兜底。若剩余图片数与角色数正好相等，会按顺序配对。
@@ -250,7 +250,7 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
 - **无 token、无鉴权**。请只在可信网络使用，或显式绑定回环地址。
 - **框架层只读**：HTTP 方法白名单仅允许 `GET`/`HEAD`，其他方法在路由前直接返回 405 与 `Allow: GET, HEAD`；页面只提供项目选择、漫画网格、**角色人设图**、单页阅读，没有写接口、不叠加气泡（文字已在 PNG 里）。
 - 媒体地址为 `/media/<项目 slug>/<项目相对路径>`，中文 slug 与文件名会正确 URL 编码；页面快照中的路径自带 `pages/` 前缀。
-- **Web 预览图会压缩到 500,000 字节以下**：`/manga web start` 前自动在 `.web/` 生成缓存；新出图也会自动生成。HTTP 服务只读取压缩缓存，不在请求中写文件。
+- **PNG 预览图会压缩到 500,000 字节以下**：`/manga web start` 前自动在 `.web/` 生成缓存；新出图也会自动生成。HTTP 服务只读取压缩缓存，不在请求中写文件。direct 模式导入的 JPEG/WebP 原图不做重编码，直接按原图返回（PNG 以外的格式没有内置解码器）。
 - 页面网格已加大，漫画按页展示更大的画面，点击可继续放大阅读；每格左上角显示 `页号/该页图片号`（例如 `3/2` 表示第 3 页第 2 格），悬停/标题可看到 `page-xxx/panel-xx`，方便 `/manga regen` 定位。人设图同样适配页面宽度。
 - **移动端适配**：`viewport-fit=cover` + 安全区变量；≤720px 顶栏分两行、触控目标 ≥44px；漫画网格按宽度降为 2 列/单列；阅读器支持左右滑动切换与移动端底部按钮。前端按 ES modules + 分文件 CSS 组织（`assets/js/*`、`assets/css/*`），无构建步骤。
 - 图片直接流式返回，支持 Range/ETag；服务端不缓存图片字节。
@@ -326,10 +326,10 @@ Ark 内置可选模型：`doubao-seedream-5-5-261028`（默认）、`doubao-seed
 ## 测试
 
 ```bash
-node --experimental-strip-types --test tests/*.test.ts   # 63 个用例
+node --experimental-strip-types --test tests/*.test.ts   # 68 个用例
 ```
 
-测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering/空镜校验、角色参考图导入与 direct/restyle、改编等级与提示词注入、黑白画风颜色锁与灰度兜底、Agnes/Ark 重试与流式下载上限、图片压缩到 <500 KB、Web 只读方法白名单/默认 0.0.0.0/SSE/Range/中文路径/人设图、ZIP/CBZ 导出、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过、图像模块 provider/workspace 解耦、Ark payload/尺寸映射、模型选择与状态显示、错误分层。
+测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering/空镜校验、角色参考图导入与 direct/restyle（含非 PNG 参考图保留）、分镜参考图缺失/非法路径校验、改编等级与提示词注入、黑白画风颜色锁与灰度兜底、Agnes/Ark 重试与流式下载上限、图片压缩到 <500 KB、Web 只读方法白名单/默认 0.0.0.0/SSE/Range/中文路径/人设图/非 PNG 直出、ZIP/CBZ 导出、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过、图像模块 provider/workspace 解耦、Ark payload/尺寸映射、模型选择与状态显示、错误分层。
 
 ## 文档
 
@@ -352,3 +352,4 @@ node --experimental-strip-types --test tests/*.test.ts   # 63 个用例
 - 视觉 QA 尚未实现（`qa.vision` 目前不生效，结构 QA 始终执行）。
 - 不支持并行出图（按需求严格串行）。
 - 换画风会让立绘、提示词与画面全部失效，需要重跑。
+- Web 预览压缩只处理 PNG；direct 模式导入的 JPEG/WebP 原图直接返回，不做重编码。

@@ -103,7 +103,7 @@ no watermark, no signature, no text other than the specified lettering
 | 模型 | 跟随宿主当前模型；可用 `/manga models` 逐角色覆盖 |
 | 出图 | 默认 `agnes`（免费）；可切 `ark`（付费 Seedream，可交互选模型）；1K 草稿，`--final` 为 2K；串行；URL 输出 + 流式下载 |
 | 视觉 QA | v0.2 预留；v0.1 只做结构 QA（代码，零 token） |
-| Web | 只读，只显示图片；默认 `0.0.0.0`；无 token/鉴权；网格 + 人设 + 单页阅读；预览图 <500,000 字节；`start/stop/status/restart`；端口必须手动指定，不随机 |
+| Web | 只读，只显示图片；默认 `0.0.0.0`；无 token/鉴权；网格 + 人设 + 单页阅读；PNG 预览图 <500,000 字节（JPEG/WebP 原图直出）；`start/stop/status/restart`；端口必须手动指定，不随机 |
 | 最终打包 | 默认 `exports/<slug>.zip`（仅图片普通 ZIP）；`--cbz` 导出 `.cbz` |
 
 若实现中发现这些默认值与 Agnes 的实际文字能力冲突（例如长气泡经常糊），我会先停下来用实测结果向你报告，而不是静默改设计。

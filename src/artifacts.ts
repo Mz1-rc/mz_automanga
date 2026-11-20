@@ -222,12 +222,25 @@ export function validatePage(
 					issues.push(`${label} 的 prompt 未包含 dialogue[${di}] 原文：${line.text}`);
 				}
 			}
-			for (const ref of panel?.refs ?? []) {
+			const refs = (panel?.refs ?? []).map((ref) => String(ref).replaceAll("\\", "/").trim()).filter(Boolean);
+			for (const ref of refs) {
+				// Imported user refs live under source/character-refs/; panels must
+				// reference the final character sheet under characters/ instead.
+				if (!ref.startsWith("characters/")) {
+					issues.push(`${label} 的参考图必须是 characters/ 下的角色立绘: ${ref}`);
+					continue;
+				}
 				// Character sheets must exist before prompting. Continuity refs may
 				// point at panels that will be generated later in the same stage.
-				if (!ref.startsWith("characters/")) continue;
 				if (!existsSync(resolveWithin(options.projectRoot, ref))) {
 					issues.push(`${label} 的参考图不存在: ${ref}`);
+				}
+			}
+			for (const character of panel?.characters ?? []) {
+				const member = cast.get(character.id);
+				const required = (member?.refSheet || `characters/${character.id}/ref.png`).replaceAll("\\", "/");
+				if (!refs.includes(required)) {
+					issues.push(`${label} 的 refs 缺少角色 ${character.id} 的立绘: ${required}`);
 				}
 			}
 		}

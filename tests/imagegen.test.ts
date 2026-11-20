@@ -53,8 +53,8 @@ function makePage(): MangaPage {
 }
 
 /** Minimal workspace: no ProjectStore, no previews, no pipeline. */
-function makeWorkspace(root: string): { workspace: ImageGenWorkspace; calls: string[] } {
-	const pages = new Map<number, MangaPage>([[1, makePage()]]);
+function makeWorkspace(root: string, page: MangaPage = makePage()): { workspace: ImageGenWorkspace; calls: string[] } {
+	const pages = new Map<number, MangaPage>([[1, page]]);
 	const sourceUrls = new Map<string, string>();
 	const calls: string[] = [];
 	const workspace: ImageGenWorkspace = {
@@ -129,6 +129,34 @@ test("image stages run against a provider + workspace port without app internals
 	const page = workspace.readPage(1);
 	assert.equal(page?.panels[0].image?.status, "done");
 	assert.equal(page?.panels[0].image?.sourceUrl, "https://example.com/fake.png");
+});
+
+test("missing character sheets fail the panel instead of drawing without a reference", async () => {
+	const root = mkdtempSync(join(tmpdir(), "mz-imagegen-missing-ref-"));
+	const page = makePage();
+	page.panels[0].characters = [{ id: "lin", outfit: "default" }];
+	const { workspace } = makeWorkspace(root, page);
+	const provider = new FakeProvider();
+	const result = await generatePanelImages({ workspace, config: { ...DEFAULT_IMAGE }, provider });
+	assert.equal(result.failed, 1);
+	assert.equal(result.done, 0);
+	assert.equal(provider.requests.length, 0);
+	assert.equal(page.panels[0].image?.status, "failed");
+	assert.match(page.panels[0].image?.error ?? "", /立绘不存在/);
+});
+
+test("panel refs include character sheets even when the storyboard omitted them", async () => {
+	const root = mkdtempSync(join(tmpdir(), "mz-imagegen-refs-"));
+	const page = makePage();
+	page.panels[0].characters = [{ id: "lin", outfit: "default" }];
+	page.panels[0].refs = [];
+	mkdirSync(join(root, "characters", "lin"), { recursive: true });
+	writeFileSync(join(root, "characters", "lin", "ref.png"), tinyPng(4, 4));
+	const { workspace } = makeWorkspace(root, page);
+	const provider = new FakeProvider();
+	const result = await generatePanelImages({ workspace, config: { ...DEFAULT_IMAGE, maxRefs: 4 }, provider });
+	assert.equal(result.done, 1);
+	assert.equal(provider.requests[0].refs?.length, 1);
 });
 
 test("provider registry exposes built-ins and accepts custom factories", () => {

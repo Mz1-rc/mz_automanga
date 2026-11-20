@@ -7,7 +7,7 @@
  * these modules.
  */
 import { existsSync, renameSync, unlinkSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, extname } from "node:path";
 import type { MangaConfig } from "./config.ts";
 import { createImageProvider, imageProviders, type ImageProvider, type ImageProviderConfig, type ImageGenWorkspace } from "./imagegen/index.ts";
 import { ensureDir, panelRelPath, readText, resolveWithin, writeAtomic } from "./paths.ts";
@@ -16,16 +16,23 @@ import type { ProjectStore } from "./state.ts";
 import { toMonochromePng } from "./util/png-grayscale.ts";
 import { isMonochromeStyle } from "./imagegen/style.ts";
 
+/** Sidecar path for any image extension, not just PNG. */
 function sourceUrlPath(imageRel: string): string {
-	return imageRel.replace(/\.png$/i, ".source-url.txt");
+	const slash = Math.max(imageRel.lastIndexOf("/"), imageRel.lastIndexOf("\\"));
+	const dot = imageRel.lastIndexOf(".");
+	if (dot <= slash) return `${imageRel}.source-url.txt`;
+	return `${imageRel.slice(0, dot)}.source-url.txt`;
 }
 
 /** Keep at most `keepVersions` previous images: ref.png → ref.v1.png → … */
 function bumpVersion(path: string, keepVersions: number): void {
 	if (!existsSync(path) || keepVersions <= 0) return;
+	const ext = extname(path);
+	const stem = ext ? path.slice(0, -ext.length) : path;
+	const versionPath = (n: number) => `${stem}.v${n}${ext}`;
 	for (let n = keepVersions; n >= 1; n--) {
-		const target = path.replace(/\.png$/i, `.v${n}.png`);
-		const source = n === 1 ? path : path.replace(/\.png$/i, `.v${n - 1}.png`);
+		const target = versionPath(n);
+		const source = n === 1 ? path : versionPath(n - 1);
 		if (existsSync(source)) {
 			try {
 				renameSync(source, target);
@@ -101,6 +108,10 @@ class ProjectImageWorkspace implements ImageGenWorkspace {
 	afterImageWritten(rel: string): void {
 		const abs = resolveWithin(this.store.root, rel);
 		if (/\.png$/i.test(rel) && isMonochromeStyle(this.store.project.style)) toMonochromePng(abs);
+		ensureWebPreview(this.store.root, rel);
+	}
+
+	ensurePreview(rel: string): void {
 		ensureWebPreview(this.store.root, rel);
 	}
 

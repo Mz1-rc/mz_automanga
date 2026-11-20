@@ -11,8 +11,9 @@ import {
 	readCharacterRefManifest,
 } from "../src/character-refs.ts";
 import { DEFAULT_IMAGE, generateCharacterImages, type ImageGenWorkspace, type ImageProvider } from "../src/imagegen/index.ts";
+import { createProjectImageWorkspace } from "../src/imagegen-adapter.ts";
 import type { Bible } from "../src/types.ts";
-import { tinyPng, writeTinyPng } from "./helpers.ts";
+import { makeTestProject, tinyPng, writeTinyPng } from "./helpers.ts";
 
 function bibleWith(cast: Bible["cast"]): Bible {
 	return {
@@ -58,6 +59,48 @@ test("imported character references are matched to cast and honor direct/restyle
 	assert.equal(applyCharacterRefsToBible(restyleBible, restyle), true);
 	assert.equal(restyleBible.cast[0].refSheet, "characters/lin/ref.png");
 	assert.deepEqual(characterRefSettings("restyle", input).mode, "restyle");
+});
+
+test("direct mode keeps non-png user references and does not delete them as a sidecar", async () => {
+	const { store } = makeTestProject();
+	const userRef = "source/character-refs/01-lin.jpg";
+	mkdirSync(join(store.root, "source/character-refs"), { recursive: true });
+	writeFileSync(join(store.root, userRef), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+	writeFileSync(
+		join(store.root, "source/character-refs/manifest.json"),
+		JSON.stringify({ schemaVersion: 1, mode: "direct", inputPath: "x", files: [{ file: userRef, originalPath: "x", originalName: "lin.jpg" }] }),
+	);
+	writeFileSync(
+		join(store.root, "bible.json"),
+		JSON.stringify(
+			bibleWith([
+				{
+					id: "lin",
+					name: "林澈",
+					role: "protagonist",
+					canonical: "",
+					outfits: { default: "" },
+					refPrompt: "sheet",
+					userRefs: [userRef],
+					refSheet: "characters/lin/ref.jpg",
+				},
+			]),
+		),
+	);
+	let calls = 0;
+	const provider: ImageProvider = {
+		id: "fake",
+		async generate() {
+			calls += 1;
+			return { file: "", width: 1, height: 1, bytes: 0, attempts: 1, size: "1K", format: "png" };
+		},
+	};
+	const workspace = createProjectImageWorkspace(store);
+	const result = await generateCharacterImages({ workspace, config: { ...DEFAULT_IMAGE }, provider, force: true });
+	assert.equal(result.done, 1);
+	assert.equal(calls, 0);
+	assert.ok(existsSync(join(store.root, "characters/lin/ref.jpg")));
+	assert.equal(existsSync(join(store.root, "characters/lin/ref.source-url.txt")), false);
 });
 
 test("direct mode copies the user reference without calling the image provider", async () => {

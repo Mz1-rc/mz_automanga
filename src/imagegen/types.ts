@@ -139,6 +139,8 @@ export interface ImageGenWorkspace {
 	prepareImage(rel: string, keepVersions: number): string;
 	/** Post-process a freshly written image (monochrome lock, web preview). */
 	afterImageWritten(rel: string): void;
+	/** Refresh derived Web previews without touching the original (e.g. direct copies). */
+	ensurePreview?(rel: string): void;
 	readSourceUrl(rel: string): string | undefined;
 	writeSourceUrl(rel: string, url: string | undefined): void;
 }
