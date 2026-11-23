@@ -14,6 +14,7 @@ import {
 	actionListProjects,
 	actionModels,
 	actionNext,
+	actionNextUnit,
 	actionOpen,
 	actionPause,
 	actionPrompt,
@@ -26,8 +27,10 @@ import {
 	actionRollback,
 	actionRunAll,
 	actionRunRole,
+	actionSplitSource,
 	actionStatus,
 	actionStep,
+	actionUnits,
 	actionStyle,
 	actionWeb,
 	type ActionCtx,
@@ -41,7 +44,7 @@ interface Parsed {
 }
 
 const BOOLEAN_FLAGS = new Set(["force", "final", "open", "regen", "test", "vision", "no-export", "cbz"]);
-const VALUE_FLAGS = new Set(["script", "dir", "title", "style", "custom", "ratio", "adaptation", "host", "port", "note", "refs", "ref-mode", "key", "auto", "provider", "model"]);
+const VALUE_FLAGS = new Set(["script", "dir", "title", "style", "custom", "ratio", "adaptation", "host", "port", "note", "refs", "ref-mode", "key", "auto", "provider", "model", "unit"]);
 
 export function parseArgs(input: string): Parsed {
 	const tokens: string[] = [];
@@ -86,14 +89,18 @@ function bool(flags: Record<string, string | boolean>, name: string): boolean {
 
 const HELP = `mz_automanga · 多 Agent 漫画流水线
 
-  /manga init [--script <文件|目录>] [--title <书名>] [--note <初始备注>]
-              [--refs <图片|目录>] [--ref-mode direct|restyle]
-              [--style <preset>] [--adaptation strict|balanced|free]
+  /manga init [--script <文件|目录>] [--unit <序号|id|标题>] [--title <书名>]
+              [--note <初始备注>] [--refs <图片|目录>]
+              [--ref-mode direct|restyle] [--style <preset>]
+              [--adaptation strict|balanced|free]
+  /manga units             查看章节/分块计划
+  /manga next-unit [序号|id] 切换到下一个章节并创建/打开对应项目
+  /manga split-source [序号|id]  迁移旧项目：把整本 source/script.md 切成单元
   /manga status
   /manga next              推进下一阶段（后台）
   /manga step              只执行下一步（后台）
   /manga run-all           跑完剩余流程（遇到闸门会停）
-  /manga auto-run          开启全自动并跑完剩余流程（= auto on + run-all）
+  /manga auto-run          开启全自动并跑完剩余流程；系列模式会逐单元跑完整本
   /manga run <role>        运行指定角色
   /manga approve [意见]    通过当前闸门
   /manga revise <意见>     按意见重做当前闸门产物
@@ -148,6 +155,7 @@ export async function handleMangaCommand(
 					customPrompt: str(flags, "custom"),
 					ratio: str(flags, "ratio") as never,
 					adaptation: str(flags, "adaptation"),
+					unit: str(flags, "unit"),
 				});
 				return;
 			}
@@ -156,6 +164,18 @@ export async function handleMangaCommand(
 				return;
 			case "next":
 				ctx.ui.notify(actionNext(ctx, app), "info");
+				return;
+			case "units":
+			case "chapters":
+				ctx.ui.notify(actionUnits(ctx, app), "info");
+				return;
+			case "next-unit":
+			case "next-chapter":
+				ctx.ui.notify(actionNextUnit(ctx, app, rest || str(flags, "unit") || undefined), "info");
+				return;
+			case "split-source":
+			case "migrate-source":
+				ctx.ui.notify(actionSplitSource(ctx, app, rest || str(flags, "unit") || undefined), "info");
 				return;
 			case "step":
 				ctx.ui.notify(actionStep(ctx, app), "info");
@@ -272,6 +292,9 @@ export function registerMangaCommand(pi: ExtensionAPI, app: MangaApp): void {
 				"init",
 				"status",
 				"next",
+				"units",
+				"next-unit",
+				"split-source",
 				"step",
 				"run-all",
 				"auto-run",

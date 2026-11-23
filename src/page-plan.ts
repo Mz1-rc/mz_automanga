@@ -2,6 +2,7 @@ import { countChars } from "./paths.ts";
 import type { Scene, ScriptAnalysis } from "./types.ts";
 
 export const STORYBOARD_MAX_PAGES = 40;
+export const DEFAULT_STORYBOARD_MAX_PAGES_PER_UNIT = STORYBOARD_MAX_PAGES;
 /** Rough source-text density used to stop a short script from becoming a recap. */
 export const PAGE_SCRIPT_CHARS = 140;
 /** A page has 3–6 panels, so more than this many beats per page gets crowded. */
@@ -58,18 +59,23 @@ function sceneInventory(scenes: Scene[]): Array<{ scene: Scene; beat: string; sc
  * remaining pages with recaps/replays. This plan caps the page count by the
  * actual scene/beat/source budget and gives every page its own slice of beats.
  */
-export function buildStoryboardPlan(analysis: ScriptAnalysis, script: string): StoryboardPlan {
+export function buildStoryboardPlan(
+	analysis: ScriptAnalysis,
+	script: string,
+	options: { maxPages?: number } = {},
+): StoryboardPlan {
+	const maxPages = clamp(Math.round(Number(options.maxPages) || STORYBOARD_MAX_PAGES), 1, 200);
 	const scenes = (analysis.scenes ?? []).filter(Boolean);
 	const flat = sceneInventory(scenes);
 	const totalBeats = flat.length;
-	const requestedPages = clamp(Math.round(Number(analysis.pageEstimate) || 1), 1, STORYBOARD_MAX_PAGES);
+	const requestedPages = clamp(Math.round(Number(analysis.pageEstimate) || 1), 1, maxPages);
 	const sceneFloor = Math.max(1, scenes.length);
 	const contentPages = Math.max(1, Math.ceil(countChars(script) / PAGE_SCRIPT_CHARS));
 	const beatPages = Math.max(1, Math.ceil(totalBeats / PAGE_BEATS));
 	// Keep at least one page per scene, but only allow extra pages when both the
 	// source text and the number of beats can support them.
-	const budgetPages = clamp(Math.max(sceneFloor, Math.min(contentPages, beatPages)), 1, STORYBOARD_MAX_PAGES);
-	const totalPages = clamp(Math.min(requestedPages, budgetPages), 1, STORYBOARD_MAX_PAGES);
+	const budgetPages = clamp(Math.max(sceneFloor, Math.min(contentPages, beatPages)), 1, maxPages);
+	const totalPages = clamp(Math.min(requestedPages, budgetPages), 1, maxPages);
 
 	const pages: StoryboardPagePlan[] = [];
 	if (totalBeats === 0) {

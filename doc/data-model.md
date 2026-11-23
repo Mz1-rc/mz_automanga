@@ -63,9 +63,23 @@
     "previewChars": 160,
     "zipChunkBytes": 1048576
   },
-  "source": { "file": "source/script.md", "sha256": "…" }
+  "source": {
+    "file": "source/script.md",
+    "sha256": "…",
+    "plan": "source/plan.json",
+    "strategy": "chaptered",
+    "unitId": "unit-003",
+    "unitIndex": 3,
+    "totalUnits": 120,
+    "unitTitle": "第三回 …",
+    "seriesId": "honglou"
+  },
+  "series": { "id": "honglou", "title": "红楼梦", "unitId": "unit-003", "unitIndex": 3, "totalUnits": 120 }
 }
 ```
+
+`source/script.md` 始终只保存**当前工作单元**。长文项目在 `source/plan.json` 保存策略与全部单元元数据；
+完整原文副本在 `.automanga/series/<id>/units/`。
 
 ### 5.2 `state.json`
 
@@ -175,6 +189,37 @@ idle | intake | script_analysis | script_gate | design | cast | cast_gate
 
 ## Q2（minor）
 答：允许轻度超现实
+```
+
+### 5.3.1 `source/plan.json` 与系列清单
+
+```json
+{
+  "schemaVersion": 1,
+  "strategy": "chaptered",
+  "totalChars": 865584,
+  "maxUnitChars": 60000,
+  "splitThresholdChars": 60000,
+  "totalUnits": 120,
+  "fromDirectory": true,
+  "units": [
+    { "id": "unit-001", "index": 1, "title": "第一回 …", "rel": "第001回.md", "chars": 7895, "kind": "section" }
+  ]
+}
+```
+
+`strategy`：`single` / `chaptered` / `chunked`。系列清单位于 `.automanga/series/<id>.json`，记录输入路径、风格、全部单元与对应项目 slug。
+
+`analysis.scope` 是分析覆盖证据：
+
+```json
+"scope": {
+  "unitId": "unit-001",
+  "unitTitle": "第一回 …",
+  "charCount": 7895,
+  "firstQuote": "此开卷第一回也……",
+  "lastQuote": "……且听下回分解。"
+}
 ```
 
 ### 5.4 `bible.json`

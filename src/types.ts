@@ -136,6 +136,17 @@ export interface MemoryConfig {
 	zipChunkBytes: number;
 }
 
+export interface SourceConfig {
+	/** Maximum visible characters a single role may read as one work unit. */
+	maxUnitChars: number;
+	/** Above this size the framework splits the input into units. */
+	splitThresholdChars: number;
+	/** Storyboard page budget for one work unit. */
+	maxStoryboardPagesPerUnit: number;
+	/** Hard cap for reading the original input before splitting (bytes). */
+	maxInputBytes: number;
+}
+
 export interface ImageProviderSettings {
 	baseUrl?: string;
 	model?: string;
@@ -163,9 +174,79 @@ export interface MangaConfig {
 	web: WebConfig;
 	qa: QaConfig;
 	memory: MemoryConfig;
+	source: SourceConfig;
 }
 
 export type ProjectTitleSource = "user" | "auto" | "directory";
+
+/** How a long script was turned into work units. */
+export type SourceStrategy = "single" | "chaptered" | "chunked";
+
+export type SourceUnitKind = "file" | "section" | "chunk";
+
+/** Persistable unit metadata; the unit text lives in a separate .md file. */
+export interface SourceUnitMeta {
+	id: string;
+	index: number;
+	title: string;
+	rel: string;
+	chars: number;
+	kind: SourceUnitKind;
+}
+
+export interface SourcePlan {
+	schemaVersion: 1;
+	strategy: SourceStrategy;
+	totalChars: number;
+	maxUnitChars: number;
+	splitThresholdChars: number;
+	totalUnits: number;
+	fromDirectory: boolean;
+	units: SourceUnitMeta[];
+}
+
+export interface ProjectSource {
+	file: string;
+	sha256: string;
+	/** Relative path to source/plan.json when the input was split. */
+	plan?: string;
+	strategy?: SourceStrategy;
+	unitId?: string;
+	unitIndex?: number;
+	totalUnits?: number;
+	unitTitle?: string;
+	seriesId?: string;
+}
+
+export interface SeriesRef {
+	id: string;
+	title: string;
+	unitId: string;
+	unitIndex: number;
+	totalUnits: number;
+}
+
+export interface SeriesUnitRecord extends SourceUnitMeta {
+	/** File under series/<id>/units/ containing the unit text. */
+	file: string;
+	projectSlug?: string;
+	status?: "pending" | "active" | "done";
+}
+
+export interface SeriesRecord {
+	schemaVersion: 1;
+	id: string;
+	title: string;
+	inputPath: string;
+	createdAt: string;
+	updatedAt: string;
+	strategy: SourceStrategy;
+	totalChars: number;
+	totalUnits: number;
+	style: StyleSelection;
+	adaptation?: AdaptationLevel;
+	units: SeriesUnitRecord[];
+}
 
 export type CharacterRefMode = "direct" | "restyle";
 
@@ -196,7 +277,9 @@ export interface MangaProject {
 	qa: QaConfig;
 	memory: MemoryConfig;
 	config?: Partial<MangaConfig>;
-	source: { file: string; sha256: string };
+	source: ProjectSource;
+	/** Set when this project is one chapter/unit of a larger serialized script. */
+	series?: SeriesRef;
 }
 
 export interface GateRecord {
@@ -280,6 +363,16 @@ export interface Scene {
 	dialogue?: SceneDialogue[];
 }
 
+export interface AnalysisScope {
+	unitId: string;
+	unitTitle: string;
+	charCount: number;
+	/** Exact opening text of the current unit (used as a coverage check). */
+	firstQuote: string;
+	/** Exact closing text of the current unit (used as a coverage check). */
+	lastQuote: string;
+}
+
 export interface ScriptAnalysis {
 	schemaVersion: 1;
 	format: ScriptFormat;
@@ -292,6 +385,8 @@ export interface ScriptAnalysis {
 	status: "clear" | "needs_clarification";
 	issues: ScriptIssue[];
 	assumptions: string[];
+	/** Present on projects created after source unitization. */
+	scope?: AnalysisScope;
 }
 
 /** ---- bible ---- */

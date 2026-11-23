@@ -86,7 +86,14 @@ const POSITIONS = new Set(["top-left", "top-right", "bottom-left", "bottom-right
 const SHAPES = new Set(["rounded", "spiky", "cloud", "box"]);
 const DIALOGUE_TYPES = new Set(["speech", "thought", "narration", "sfx"]);
 
-export function validateAnalysis(analysis: ScriptAnalysis | undefined): ValidationResult {
+function quoteKey(text: string): string {
+	return text.replace(/\s+/g, "").trim();
+}
+
+export function validateAnalysis(
+	analysis: ScriptAnalysis | undefined,
+	options: { unitId?: string; sourceText?: string } = {},
+): ValidationResult {
 	const issues: string[] = [];
 	if (!analysis || typeof analysis !== "object") return fail(["source/analysis.json 缺失或不是对象"]);
 	if (!FORMATS.has(analysis.format)) issues.push(`format 必须是 ${[...FORMATS].join("/")}`);
@@ -126,6 +133,37 @@ export function validateAnalysis(analysis: ScriptAnalysis | undefined): Validati
 		issues.push("pageEstimate 必须是 1–60 的整数");
 	}
 	if (!Array.isArray(analysis.assumptions)) issues.push("assumptions 必须是数组");
+	if (options.unitId) {
+		const scope = analysis.scope;
+		if (!scope || typeof scope !== "object") {
+			issues.push("analysis.scope 缺失：必须声明本次分析对应的 unitId、firstQuote 与 lastQuote");
+		} else {
+			if (scope.unitId !== options.unitId) {
+				issues.push(`analysis.scope.unitId 应为 ${options.unitId}，实际为 ${scope.unitId || "空"}`);
+			}
+			if (!scope.firstQuote?.trim()) issues.push("analysis.scope.firstQuote 为空");
+			if (!scope.lastQuote?.trim()) issues.push("analysis.scope.lastQuote 为空");
+			const source = quoteKey(options.sourceText ?? "");
+			if (source && scope.firstQuote?.trim() && scope.lastQuote?.trim()) {
+				const first = quoteKey(scope.firstQuote);
+				const last = quoteKey(scope.lastQuote);
+				const firstPos = source.indexOf(first);
+				const lastPos = source.lastIndexOf(last);
+				if (first === last) {
+					issues.push("analysis.scope.firstQuote 与 lastQuote 不能相同（必须覆盖单元首尾）");
+				} else {
+					if (firstPos < 0) issues.push("analysis.scope.firstQuote 未在当前工作单元中找到");
+					else if (firstPos > source.length * 0.4) {
+						issues.push("analysis.scope.firstQuote 不在当前单元开头附近，可能没有从单元起始处分析");
+					}
+					if (lastPos < 0) issues.push("analysis.scope.lastQuote 未在当前工作单元中找到");
+					else if (lastPos < source.length * 0.6) {
+						issues.push("analysis.scope.lastQuote 不在当前单元结尾附近，分析可能未覆盖完整单元");
+					}
+				}
+			}
+		}
+	}
 	return fail(issues);
 }
 
@@ -291,7 +329,9 @@ export function validateRoleOutputs(ctx: RoleValidationContext): ValidationResul
 	switch (ctx.role) {
 		case "script_analyst": {
 			const analysis = readJson<ScriptAnalysis>(resolveWithin(ctx.projectRoot, "source/analysis.json"));
-			issues.push(...validateAnalysis(analysis).issues);
+			const sourceText = read(ctx.project.source.file);
+			const split = (ctx.project.source.totalUnits ?? 1) > 1;
+			issues.push(...validateAnalysis(analysis, { unitId: split ? ctx.project.source.unitId : undefined, sourceText }).issues);
 			break;
 		}
 		case "director": {

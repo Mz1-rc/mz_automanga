@@ -12,7 +12,10 @@
 
 | 命令 | 作用 |
 |---|---|
-| `/manga init [--script <文件\|目录>] [--title <t>] [--note <备注>] [--refs <图片\|目录>] [--ref-mode direct\|restyle] [--style <preset>] [--adaptation strict\|balanced\|free]` | 新建项目：读取剧本 → 书名 → 初始备注 → 角色参考图 → 画风 → 改编等级；备注供剧本分析参考，参考图支持直接使用或跟随画风重绘 |
+| `/manga init [--script <文件\|目录>] [--unit <序号\|id\|标题>] [--title <t>] [--note <备注>] [--refs <图片\|目录>] [--ref-mode direct\|restyle] [--style <preset>] [--adaptation strict\|balanced\|free]` | 新建项目：读取剧本 → 自动判断 single/chaptered/chunked → 选择工作单元 → 书名 → 初始备注 → 角色参考图 → 画风 → 改编等级 |
+| `/manga units` | 查看系列章节/分块清单与当前单元 |
+| `/manga next-unit [序号\|id]` | 创建或切换到下一个工作单元 |
+| `/manga split-source [序号\|id]` | 迁移旧项目：把整本 `source/script.md` 切成单元 |
 | `/manga next` | 后台推进下一阶段（立即返回） |
 | `/manga step` | 后台只执行下一个角色或代码阶段 |
 | `/manga run <role>` | 后台运行当前阶段对应的角色 |
@@ -30,7 +33,7 @@
 | `/manga provider [id] [--model <model>]` | 切换图像模型提供方：`agnes`（免费默认）/ `ark`（付费）；无 id 时交互选择，切换 `ark` 时再选 Seedream 模型 |
 | `/manga config` | 查看有效配置 |
 | `/manga auto on\|off` | 全自动模式（跳过闸门，仍做校验） |
-| `/manga auto-run` | 开启全自动并后台跑完剩余流程（等价于 `auto on` + `run-all`） |
+| `/manga auto-run` | 开启全自动并后台跑完剩余流程；章节/分块项目会逐单元自动推进直到整本完成 |
 | `/manga pause` / `/manga resume` | 暂停 / 恢复 |
 | `/manga abort` | 中止当前后台任务（也可 Esc） |
 | `/manga doctor` | 检查状态、文件、锁、未完成运行 |

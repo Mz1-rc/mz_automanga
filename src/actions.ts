@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, readdirSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, readdirSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { composeStylePrompt, makeStyle, STYLE_PRESETS, type MangaConfig } from "./config.ts";
 import { createProviderFromConfig } from "./imagegen-adapter.ts";
@@ -11,7 +11,9 @@ import { ensureProjectWebPreviews } from "./previews.ts";
 import { listProjects, ProjectStore } from "./state.ts";
 import { characterRefSettings, collectCharacterRefSources, importCharacterRefs } from "./character-refs.ts";
 import { readScriptInput } from "./script-input.ts";
-import { ADAPTATION_INFO, ADAPTATION_LEVELS, ROLE_IDS, type AdaptationLevel, type CharacterRefMode, type RoleId, type StylePreset, type StyleSelection } from "./types.ts";
+import { findUnit, planScriptInput, strategyLabel, unitChoices } from "./source-plan.ts";
+import { createSeriesAt, markSeriesUnitProject, readSeries, readSeriesUnitText } from "./series.ts";
+import { ADAPTATION_INFO, ADAPTATION_LEVELS, ROLE_IDS, type AdaptationLevel, type CharacterRefMode, type RoleId, type SourcePlan, type StylePreset, type StyleSelection } from "./types.ts";
 import { updateStatus, notify, phaseLabel, formatDuration, formatTokens } from "./ui.ts";
 import { startWebServer, type WebServerHandle } from "./web/server.ts";
 
@@ -174,6 +176,8 @@ export interface InitInput {
 	customPrompt?: string;
 	ratio?: StyleSelection["ratio"];
 	adaptation?: string;
+	/** Select a source unit by id, 1-based index, title or file name. */
+	unit?: string;
 }
 
 export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput): Promise<ProjectStore> {
@@ -187,11 +191,48 @@ export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput)
 
 	// 剧本路径来自用户，允许绝对路径；相对路径按会话工作目录解析。
 	const absPath = isAbsolute(scriptPath) ? scriptPath : resolve(ctx.cwd, scriptPath);
-	const scriptInput = readScriptInput(absPath);
-	const script = scriptInput.text;
+	const config = app.baseConfig();
+	const scriptInput = readScriptInput(absPath, { maxUnitChars: config.source.maxUnitChars, maxBytes: config.source.maxInputBytes });
+	const planned = planScriptInput(scriptInput, {
+		maxUnitChars: config.source.maxUnitChars,
+		splitThresholdChars: config.source.splitThresholdChars,
+	});
+	const isSplit = planned.plan.strategy !== "single";
+
+	let selectedUnit = planned.units[0];
+	if (isSplit) {
+		if (input.unit) {
+			const found = findUnit(planned.units, input.unit);
+			if (!found) {
+				throw new Error(
+					`找不到工作单元：${input.unit}。可用：${planned.units.slice(0, 8).map((unit) => `${unit.index}.${unit.title}`).join(" / ")}${planned.units.length > 8 ? " …" : ""}`,
+				);
+			}
+			selectedUnit = found;
+		} else if (ctx.hasUI) {
+			const choice = await ctx.ui.select(
+				`检测到 ${planned.units.length} 个工作单元（${strategyLabel(planned.plan.strategy)}），本次先做哪一个？`,
+				unitChoices(planned.units),
+			);
+			if (!choice) throw new Error("已取消创建工作单元");
+			selectedUnit = planned.units.find((unit) => choice.startsWith(`${unit.index}. `)) ?? planned.units[0];
+		} else {
+			notify(
+				ctx as never,
+				`检测到 ${planned.units.length} 个工作单元与 ${planned.plan.totalChars} 字长文，已自动选择第 ${selectedUnit.index} 个「${selectedUnit.title}」。其余单元可用 /manga next-unit 继续。`,
+				"warning",
+			);
+		}
+	}
+	const script = isSplit ? selectedUnit.text : planned.singleText;
 
 	let title = input.title?.trim();
 	let titleSource: "user" | "auto" | "directory" | undefined = title ? "user" : undefined;
+	if (!title && isSplit) {
+		const seriesTitle = scriptInput.fromDirectory ? basename(absPath) : basename(absPath).replace(/\.[^.]+$/, "");
+		title = `${seriesTitle} · ${selectedUnit.title}`;
+		titleSource = scriptInput.fromDirectory ? "directory" : "auto";
+	}
 	if (!title && scriptInput.fromDirectory) {
 		title = basename(absPath);
 		titleSource = "directory";
@@ -231,7 +272,6 @@ export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput)
 		refMode ??= "restyle";
 	}
 
-	const config = app.baseConfig();
 	let style: StyleSelection | undefined;
 	if (input.style) {
 		const preset = (Object.keys(STYLE_PRESETS) as StylePreset[]).includes(input.style as StylePreset)
@@ -274,6 +314,50 @@ export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput)
 	}
 
 	const { store } = app.create(ctx.cwd, { title, titleSource, style, adaptation, script });
+
+	// Persist the source plan before anything can be analysed. For a split
+	// project, `source/script.md` is only the selected unit; the full unit list
+	// stays as metadata (and, for series projects, in the series directory).
+	writeJsonAtomic(join(store.root, "source", "plan.json"), planned.plan);
+	if (isSplit) {
+		writeAtomic(
+			join(store.root, "source", "units", `${selectedUnit.id}.md`),
+			`${selectedUnit.text.trim()}\n`,
+		);
+	}
+
+	let series: Awaited<ReturnType<typeof createSeriesAt>> | undefined;
+	if (isSplit) {
+		const seriesTitle = input.title?.trim() || (scriptInput.fromDirectory ? basename(absPath) : basename(absPath).replace(/\.[^.]+$/, ""));
+		series = createSeriesAt(ctx.cwd, config, {
+			title: seriesTitle,
+			inputPath: absPath,
+			plan: planned.plan,
+			units: planned.units,
+			style,
+			adaptation,
+		});
+		store.project.series = {
+			id: series.id,
+			title: series.title,
+			unitId: selectedUnit.id,
+			unitIndex: selectedUnit.index,
+			totalUnits: series.totalUnits,
+		};
+	}
+	store.project.source = {
+		...store.project.source,
+		plan: "source/plan.json",
+		strategy: planned.plan.strategy,
+		unitId: selectedUnit.id,
+		unitIndex: selectedUnit.index,
+		totalUnits: planned.plan.totalUnits,
+		unitTitle: selectedUnit.title,
+		...(series ? { seriesId: series.id } : {}),
+	};
+	store.saveProject();
+	if (series) markSeriesUnitProject(ctx.cwd, config, series, selectedUnit.id, store.project.slug);
+
 	if (note) {
 		writeAtomic(join(store.root, "source", "user-note.md"), `# 用户初始备注\n\n${note}\n`);
 	}
@@ -286,6 +370,18 @@ export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput)
 		inputPath: absPath,
 		fromDirectory: scriptInput.fromDirectory,
 		files: scriptInput.files,
+		strategy: planned.plan.strategy,
+		totalChars: planned.plan.totalChars,
+		totalUnits: planned.plan.totalUnits,
+		plan: "source/plan.json",
+		selectedUnit: {
+			id: selectedUnit.id,
+			index: selectedUnit.index,
+			title: selectedUnit.title,
+			rel: selectedUnit.rel,
+			chars: selectedUnit.chars,
+		},
+		...(series ? { seriesId: series.id, seriesTitle: series.title } : {}),
 		...(note ? { note } : {}),
 		...(manifest && refMode
 			? {
@@ -300,13 +396,73 @@ export async function actionInit(ctx: ActionCtx, app: AppLike, input: InitInput)
 	const refSummary = manifest
 		? `，角色参考图 ${manifest.files.length} 张（${refMode === "direct" ? "直接使用" : "跟随画风改造"}）`
 		: "";
+	const splitSummary = isSplit
+		? `；${strategyLabel(planned.plan.strategy)}：${planned.plan.totalUnits} 个单元，当前 ${selectedUnit.index}/${planned.plan.totalUnits}「${selectedUnit.title}」，后续可用 /manga next-unit`
+		: "";
 	notify(
 		ctx as never,
-		`已创建《${store.project.title}》（${store.project.style.label}，${store.project.style.ratio}，改编：${adaptationLabel(store.project.adaptation)}，${scriptInput.files.length} 个输入文件${refSummary}）。运行 /manga next 开始剧本分析。`,
+		`已创建《${store.project.title}》（${store.project.style.label}，${store.project.style.ratio}，改编：${adaptationLabel(store.project.adaptation)}，${scriptInput.files.length} 个输入文件${splitSummary}${refSummary}）。运行 /manga next 开始剧本分析。`,
 		"info",
 	);
 	refreshStatus(ctx, app, store);
 	return store;
+}
+
+/** Migrate a pre-unitization project whose source/script.md is one huge book. */
+export function actionSplitSource(ctx: ActionCtx, app: AppLike, selector?: string): string {
+	const { store, config } = app.ensure(ctx.cwd);
+	if (store.project.source.plan) {
+		return `当前项目已经切分（${store.project.source.strategy ?? "single"}，${store.project.source.totalUnits ?? 1} 个单元）。`;
+	}
+	const sourceAbs = join(store.root, store.project.source.file);
+	if (!existsSync(sourceAbs)) throw new Error(`找不到项目剧本：${sourceAbs}`);
+	const input = readScriptInput(sourceAbs, { maxUnitChars: config.source.maxUnitChars, maxBytes: config.source.maxInputBytes });
+	const planned = planScriptInput(input, {
+		maxUnitChars: config.source.maxUnitChars,
+		splitThresholdChars: config.source.splitThresholdChars,
+	});
+	if (planned.plan.strategy === "single") {
+		return `当前剧本 ${planned.plan.totalChars} 字，未超过切分阈值 ${config.source.splitThresholdChars}，无需切分。`;
+	}
+	let selected = planned.units[0];
+	if (selector?.trim()) {
+		const found = findUnit(planned.units, selector);
+		if (!found) throw new Error(`找不到工作单元：${selector}`);
+		selected = found;
+	}
+	const backupRel = "source/script.full.md";
+	if (!existsSync(join(store.root, backupRel))) {
+		copyFileSync(sourceAbs, join(store.root, backupRel));
+	}
+	const series = createSeriesAt(ctx.cwd, config, {
+		title: store.project.series?.title ?? store.project.title,
+		inputPath: sourceAbs,
+		plan: planned.plan,
+		units: planned.units,
+		style: store.project.style,
+		adaptation: store.project.adaptation,
+	});
+	writeJsonAtomic(join(store.root, "source", "plan.json"), planned.plan);
+	writeAtomic(join(store.root, "source", "units", `${selected.id}.md`), `${selected.text.trim()}\n`);
+	store.project.series = {
+		id: series.id,
+		title: series.title,
+		unitId: selected.id,
+		unitIndex: selected.index,
+		totalUnits: series.totalUnits,
+	};
+	store.writeScript(selected.text, {
+		plan: "source/plan.json",
+		strategy: planned.plan.strategy,
+		unitId: selected.id,
+		unitIndex: selected.index,
+		totalUnits: planned.plan.totalUnits,
+		unitTitle: selected.title,
+		seriesId: series.id,
+	});
+	markSeriesUnitProject(ctx.cwd, config, series, selected.id, store.project.slug);
+	refreshStatus(ctx, app, store);
+	return `已将旧项目切分为 ${planned.plan.totalUnits} 个${strategyLabel(planned.plan.strategy)}单元，并切换到第 ${selected.index} 个「${selected.title}」。完整原文备份在 ${backupRel}；已有分镜若属于该单元可继续使用。`;
 }
 
 export function actionStatus(ctx: ActionCtx, app: AppLike): string {
@@ -319,6 +475,7 @@ export function actionStatus(ctx: ActionCtx, app: AppLike): string {
 			`画风：${store.project.style.label} · ${store.project.style.ratio} · ${store.project.style.preset}`,
 			`绘制模型：${describeDrawingModel(store.project.image)}`,
 			`改编：${adaptationLabel(store.project.adaptation)}`,
+			`源文本：${store.project.source.strategy ?? "single"}${store.project.source.unitId ? ` · ${store.project.source.unitIndex}/${store.project.source.totalUnits} ${store.project.source.unitTitle ?? store.project.source.unitId}` : ""}${store.project.series ? ` · 系列 ${store.project.series.title}` : ""}`,
 			`目录：${store.root}`,
 			webHandle ? `Web：${webHandle.url}（${webHandle.host}:${webHandle.port}）` : "Web：未启动（/manga web start --port <端口>）",
 		];
@@ -609,13 +766,61 @@ export function actionAuto(ctx: ActionCtx, app: AppLike, on: boolean): string {
 		: "已关闭全自动：恢复默认闸门。";
 }
 
-/** Equivalent to `/manga auto on` followed by `/manga run-all`, in one background job. */
+/** Run every remaining unit of a series in one background job. */
+function startSeriesAutoRun(ctx: ActionCtx, app: AppLike): string {
+	if (app.isBusy()) throw new Error(app.busyMessage());
+	app.ensure(ctx.cwd);
+	app.startJob("全自动运行", async (controller) => {
+		let store = app.ensure(ctx.cwd).store;
+		let completed = 0;
+		try {
+			// 1000 is a safety bound, not a book-length limit: each iteration either
+			// advances one unit or stops.
+			for (let iteration = 0; iteration < 1000; iteration++) {
+				if (controller.signal.aborted) break;
+				setAutoGates(store, true);
+				const config = app.configFor(ctx.cwd, store);
+				const pipeline = makePipeline(ctx, app, store, config, controller.signal);
+				try {
+					await pipeline.runAll();
+				} finally {
+					pipeline.finishStatus();
+				}
+				if (controller.signal.aborted) break;
+				if (store.phase !== "done") break;
+				completed++;
+				if (!store.project.series) break;
+				const currentRoot = store.root;
+				try {
+					actionNextUnit(ctx, app, undefined);
+				} catch (error) {
+					if (/最后一个工作单元/.test(String(error))) break;
+					throw error;
+				}
+				if (!app.active || app.active.root === currentRoot) break;
+				store = app.active;
+			}
+			if (store.phase === "done") {
+				notify(ctx as never, `整本自动运行结束：本次完成 ${completed} 个工作单元。`, "info");
+			}
+		} catch (error) {
+			if (!controller.signal.aborted) {
+				notify(ctx as never, error instanceof Error ? error.message : String(error), "error");
+			}
+		} finally {
+			if (app.active) refreshStatus(ctx, app, app.active);
+		}
+	});
+	return "⏳ 已启动后台任务：全自动运行整本。使用 /manga status 查看进度。";
+}
+
+/** Equivalent to `/manga auto on` + `/manga run-all`, advancing through all series units. */
 export function actionAutoRun(ctx: ActionCtx, app: AppLike): string {
 	const { store } = app.ensure(ctx.cwd);
 	// Check before mutating gates so a busy app does not leave auto mode half-enabled.
 	if (app.isBusy()) throw new Error(app.busyMessage());
 	setAutoGates(store, true);
-	return `已开启全自动（闸门全部跳过）。\n${startBackground(ctx, app, "全自动运行", (pipeline) => pipeline.runAll())}`;
+	return `已开启全自动（闸门全部跳过）。\n${startSeriesAutoRun(ctx, app)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -909,6 +1114,146 @@ export function actionRollback(ctx: ActionCtx, app: AppLike, runId?: string): st
 	walk(dir);
 	store.refreshStats();
 	return `已从快照 ${id} 回滚 ${copied} 个文件。`;
+}
+
+export function actionUnits(ctx: ActionCtx, app: AppLike): string {
+	const { store, config } = app.ensure(ctx.cwd);
+	const ref = store.project.series;
+	if (!ref) {
+		return `当前项目《${store.project.title}》是单篇模式（${store.project.source.strategy ?? "single"}），没有章节列表。`;
+	}
+	const series = readSeries(ctx.cwd, config, ref.id);
+	if (!series) return `找不到系列清单：${ref.id}`;
+	const lines = [
+		`系列：${series.title}（${series.strategy}，${series.totalUnits} 个单元 / ${series.totalChars} 字）`,
+		`当前：${ref.unitIndex}/${ref.totalUnits} ${ref.unitId}「${series.units.find((unit) => unit.id === ref.unitId)?.title ?? ""}」`,
+	];
+	for (const unit of series.units) {
+		const marker = unit.id === ref.unitId ? "▶" : unit.status === "done" ? "✔" : unit.projectSlug ? "●" : " ";
+		lines.push(`${marker} ${String(unit.index).padStart(3, "0")} ${unit.title}（${unit.chars} 字）${unit.projectSlug ? ` · ${unit.projectSlug}` : ""}`);
+	}
+	return lines.join("\n");
+}
+
+export function actionNextUnit(ctx: ActionCtx, app: AppLike, selector?: string): string {
+	const { store, config } = app.ensure(ctx.cwd);
+	const ref = store.project.series;
+	if (!ref) {
+		throw new Error("当前项目不是长文/章节模式；只有 init 时被拆分的项目才能切换单元。");
+	}
+	const series = readSeries(ctx.cwd, config, ref.id);
+	if (!series) throw new Error(`找不到系列清单：${ref.id}`);
+
+	const currentIndex = series.units.findIndex((unit) => unit.id === ref.unitId);
+	let target = selector?.trim()
+		? series.units.find((unit) => unit.id === selector.trim() || String(unit.index) === selector.trim() || unit.title.includes(selector.trim()))
+		: undefined;
+	if (selector?.trim() && !target) throw new Error(`找不到工作单元：${selector}`);
+	if (!target) {
+		const done = new Set(app.list(ctx.cwd).filter((project) => project.phase === "done").map((project) => project.slug));
+		const immediate = currentIndex >= 0 ? series.units[currentIndex + 1] : series.units[0];
+		if (immediate && (!immediate.projectSlug || !done.has(immediate.projectSlug))) {
+			target = immediate;
+		} else {
+			target =
+				series.units.slice(Math.max(0, currentIndex + 1)).find((unit) => !unit.projectSlug) ??
+				series.units.find((unit) => !unit.projectSlug) ??
+				series.units[currentIndex + 1];
+		}
+	}
+	if (!target) throw new Error("已经是最后一个工作单元。");
+
+	// If this unit already has a project, simply switch to it.
+	if (target.projectSlug) {
+		const next = app.ensure(ctx.cwd, target.projectSlug).store;
+		refreshStatus(ctx, app, next);
+		return `已切换到《${next.project.title}》（${next.project.slug}）。`;
+	}
+
+	const unitText = readSeriesUnitText(store.root, target);
+	if (!unitText.trim()) throw new Error(`工作单元文件为空：${target.file}`);
+	const nextTitle = `${series.title} · ${target.title}`;
+	const created = app.create(ctx.cwd, {
+		title: nextTitle,
+		titleSource: "directory",
+		style: store.project.style,
+		adaptation: store.project.adaptation,
+		script: unitText,
+	});
+	const next = created.store;
+	// Reuse the current project's runtime settings so switching units does not
+	// silently change provider/model/gates.
+	// Keep the previous unit's cast available as a merge seed. The director
+	// may reuse character ids/canonical/refSheet and append only new cast.
+	if (existsSync(join(store.root, "bible.json"))) {
+		cpSync(join(store.root, "bible.json"), join(next.root, "bible.previous.json"));
+	}
+	if (existsSync(join(store.root, "characters"))) {
+		cpSync(join(store.root, "characters"), join(next.root, "characters"), { recursive: true });
+	}
+	next.project.image = { ...store.project.image };
+	next.project.gates = { ...store.project.gates };
+	next.project.agents = { ...store.project.agents, overrides: { ...store.project.agents.overrides } };
+	next.project.qa = { ...store.project.qa };
+	next.project.memory = { ...store.project.memory };
+	next.project.config = { ...(store.project.config ?? {}) };
+	next.project.series = {
+		id: series.id,
+		title: series.title,
+		unitId: target.id,
+		unitIndex: target.index,
+		totalUnits: series.totalUnits,
+	};
+	next.project.source = {
+		...next.project.source,
+		plan: "source/plan.json",
+		strategy: series.strategy,
+		unitId: target.id,
+		unitIndex: target.index,
+		totalUnits: series.totalUnits,
+		unitTitle: target.title,
+		seriesId: series.id,
+	};
+	next.saveProject();
+	const plan: SourcePlan = {
+		schemaVersion: 1,
+		strategy: series.strategy,
+		totalChars: series.totalChars,
+		maxUnitChars: config.source.maxUnitChars,
+		splitThresholdChars: config.source.splitThresholdChars,
+		totalUnits: series.totalUnits,
+		fromDirectory: true,
+		units: series.units.map((unit) => ({
+			id: unit.id,
+			index: unit.index,
+			title: unit.title,
+			rel: unit.rel,
+			chars: unit.chars,
+			kind: unit.kind,
+		})),
+	};
+	writeJsonAtomic(join(next.root, "source", "plan.json"), plan);
+	writeAtomic(join(next.root, "source", "units", `${target.id}.md`), `${unitText.trim()}\n`);
+	writeJsonAtomic(join(next.root, "source", "inputs.json"), {
+		inputPath: series.inputPath,
+		fromDirectory: true,
+		strategy: series.strategy,
+		totalChars: series.totalChars,
+		totalUnits: series.totalUnits,
+		plan: "source/plan.json",
+		selectedUnit: {
+			id: target.id,
+			index: target.index,
+			title: target.title,
+			rel: target.rel,
+			chars: target.chars,
+		},
+		seriesId: series.id,
+		seriesTitle: series.title,
+	});
+	markSeriesUnitProject(ctx.cwd, config, series, target.id, next.project.slug);
+	refreshStatus(ctx, app, next);
+	return `已创建并切换到《${next.project.title}》（${next.project.slug}）。运行 /manga next 开始第 ${target.index}/${series.totalUnits} 个单元。`;
 }
 
 export function actionListProjects(ctx: ActionCtx, app: AppLike): string {

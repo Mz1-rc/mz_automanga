@@ -26,9 +26,12 @@ import type {
 	Phase,
 	ProjectState,
 	ProjectStats,
+	ProjectSource,
 	ProjectTitleSource,
 	RoleId,
 	RunRecord,
+	SeriesRef,
+	SourcePlan,
 	StyleSelection,
 } from "./types.ts";
 
@@ -390,17 +393,27 @@ export class ProjectStore {
 		return stats;
 	}
 
-	writeScript(text: string): string {
-		const rel = "source/script.md";
+	writeScript(text: string, source: Partial<ProjectSource> = {}): string {
+		const rel = source.file ?? "source/script.md";
 		ensureDir(join(this.root, "source"));
 		writeAtomic(join(this.root, rel), text.endsWith("\n") ? text : `${text}\n`);
-		this.project.source = { file: rel, sha256: sha256(text) };
+		this.project.source = {
+			...this.project.source,
+			...source,
+			file: rel,
+			sha256: sha256(text),
+		};
 		this.saveProject();
 		return rel;
 	}
 
 	readScript(): string {
 		return readText(join(this.root, this.project.source.file)) ?? "";
+	}
+
+	readSourcePlan(): SourcePlan | undefined {
+		const rel = this.project.source.plan;
+		return rel ? readJson<SourcePlan>(join(this.root, rel)) : undefined;
 	}
 
 	readAnalysis() {
@@ -458,6 +471,9 @@ export interface CreateProjectInput {
 	adaptation?: AdaptationLevel;
 	script: string;
 	config: MangaConfig;
+	/** Unit/series metadata for long-script projects. */
+	source?: Partial<ProjectSource>;
+	series?: SeriesRef;
 }
 
 export function createProject(cwd: string, input: CreateProjectInput): ProjectStore {
@@ -496,13 +512,14 @@ export function createProject(cwd: string, input: CreateProjectInput): ProjectSt
 		qa: { ...input.config.qa },
 		memory: { ...input.config.memory },
 		config: {},
-		source: { file: "source/script.md", sha256: sha256(script) },
+		source: { file: "source/script.md", sha256: sha256(script), ...input.source },
+		...(input.series ? { series: input.series } : {}),
 	};
 	const state = initialState();
 	writeJsonAtomic(projectFilePath(dir), project);
 	writeJsonAtomic(statePath(dir), state);
 	const store = new ProjectStore(dir, project, state);
-	store.writeScript(script);
+	store.writeScript(script, input.source);
 	store.refreshStats();
 	return store;
 }

@@ -35,6 +35,7 @@ export function testConfig(overrides: Partial<MangaConfig> = {}): MangaConfig {
 		qa: { ...DEFAULT_CONFIG.qa, ...(overrides.qa ?? {}) },
 		memory: { ...DEFAULT_CONFIG.memory, ...(overrides.memory ?? {}) },
 		gates: { ...DEFAULT_CONFIG.gates, ...(overrides.gates ?? {}) },
+		source: { ...DEFAULT_CONFIG.source, ...(overrides.source ?? {}) },
 	};
 }
 

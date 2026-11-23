@@ -5,6 +5,7 @@ import { createProjectImageWorkspace, createProviderFromConfig } from "./imagege
 import { validatePage, validateRefImages, validateRoleOutputs, roleTargets } from "./artifacts.ts";
 import { composeStylePrompt, type MangaConfig } from "./config.ts";
 import { buildStoryboardPlan } from "./page-plan.ts";
+import { markSeriesUnitDoneForProject } from "./series.ts";
 import { applyCharacterRefsToBible, readCharacterRefManifest } from "./character-refs.ts";
 import { resolveProviderKey } from "./keys.ts";
 import { readJson, readText, resolveWithin, writeAtomic, writeJsonAtomic, ensureDir, fileExists, nowIso } from "./paths.ts";
@@ -495,7 +496,9 @@ export class MangaPipeline {
 		await this.locked("storyboard", async () => {
 			const analysis = this.store.readAnalysis();
 			if (!analysis) throw new Error("找不到 analysis.json，无法分镜");
-			const plan = buildStoryboardPlan(analysis, this.store.readScript());
+			const plan = buildStoryboardPlan(analysis, this.store.readScript(), {
+				maxPages: this.config.source.maxStoryboardPagesPerUnit,
+			});
 			const total = plan.totalPages;
 			if (total < plan.requestedPages) {
 				this.ui.notify(
@@ -998,6 +1001,13 @@ export class MangaPipeline {
 			return;
 		}
 		this.store.transition("done");
+		if (this.project.series?.id && this.project.source.unitId) {
+			try {
+				markSeriesUnitDoneForProject(this.store.root, this.project.series.id, this.project.source.unitId);
+			} catch {
+				// Series metadata is best-effort; the project itself is still complete.
+			}
+		}
 		this.ui.notify(`《${this.project.title}》已完成。`, "info");
 		this.ui.updateStatus(this.store);
 	}
@@ -1422,6 +1432,7 @@ export function pipelineSummary(store: ProjectStore): string {
 	return [
 		`《${project.title}》`,
 		`阶段：${state.phase}`,
+		`源文本：${project.source.strategy ?? "single"}${project.source.unitId ? ` · ${project.source.unitIndex}/${project.source.totalUnits} ${project.source.unitTitle ?? project.source.unitId}` : ""}`,
 		`统计：${state.stats.pages} 页 / ${state.stats.panels} 格 / ${state.stats.images} 图 / 失败 ${state.stats.failedImages}`,
 		`闸门：${(Object.entries(state.gates) as Array<[string, { status: string }]>).map(([gate, record]) => `${gate}:${record.status}`).join(" · ")}`,
 	].join("\n");

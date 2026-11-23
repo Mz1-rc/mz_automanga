@@ -31,7 +31,12 @@
   "agents": { "thinkingLevel": "medium", "timeoutMs": 600000, "maxAttempts": 2, "overrides": {} },
   "gates": { "script": "auto", "cast": "always", "storyboard": "always", "final": "always" },
   "web": { "host": "0.0.0.0", "port": 45871, "open": true },  // port=0 时必须用 --port
-  "qa": { "vision": false, "repairRounds": 1 }
+  "qa": { "vision": false, "repairRounds": 1 },
+  "source": {
+    "maxUnitChars": 60000,
+    "splitThresholdChars": 60000,
+    "maxStoryboardPagesPerUnit": 40, "maxInputBytes": 67108864
+  }
 }
 ```
 
@@ -100,6 +105,7 @@ no watermark, no signature, no text other than the specified lettering
 | 页/格 | 每页 3–6 格；每格 ≤2 个气泡；文字不设硬性字数上限 |
 | 剧本输入 | `--script <文件|目录>`；目录递归读取 `.md/.markdown/.txt/.text`，按自然顺序合并；不再接受粘贴/命令行正文 |
 | 工作区 | `<cwd>/.automanga/` |
+| 长剧本 | `source.splitThresholdChars` 以上自动切分；`maxUnitChars` 控制单元上限；`chaptered` 按文件/标题，`chunked` 按段落/长度 |
 | 模型 | 跟随宿主当前模型；可用 `/manga models` 逐角色覆盖 |
 | 出图 | 默认 `agnes`（免费）；可切 `ark`（付费 Seedream，可交互选模型）；1K 草稿，`--final` 为 2K；串行；URL 输出 + 流式下载 |
 | 视觉 QA | v0.2 预留；v0.1 只做结构 QA（代码，零 token） |

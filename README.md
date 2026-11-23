@@ -63,7 +63,8 @@ cp -R /root/mz_automanga/extensions /root/mz_automanga/src /root/mz_automanga/pr
 
 ```text
 /manga init --script ./script.md        # 单个文件
-/manga init --script ./chapters/        # 目录：递归合并 .md/.markdown/.txt/.text
+/manga init --script ./chapters/        # 目录：递归读取 .md/.markdown/.txt/.text
+/manga init --script ./chapters/ --unit 1   # 长剧本：直接指定第 1 个工作单元
 # 或交互式：/manga init   → 输入剧本路径 → 书名 → 初始备注 → 角色参考图 → 画风/比例 → 改编等级
 
 /manga key            # 第一次出图前设置 Agnes API Key
@@ -73,6 +74,29 @@ cp -R /root/mz_automanga/extensions /root/mz_automanga/src /root/mz_automanga/pr
 ```
 
 不带 `--title` 的剧本文件会在创建项目时读取前 1600 字生成临时标题；剧本分析完成后，自动标题会替换为分析师基于全文内容给出的 `titleSuggestion`。目录输入默认使用目录名，显式书名始终优先。
+
+### 长剧本 / 超大型剧本
+
+框架在 `init` 时读取完整输入并自动判断策略，不需要用户手动切文件：
+
+| 总字符数 / 结构 | 策略 | 行为 |
+|---|---|---|
+| ≤ `source.splitThresholdChars`（默认 60,000） | `single` | 沿用单篇流程，整份剧本作为一个工作单元 |
+| > 阈值，且有章节/文件边界 | `chaptered` | 自动按文件或标题切分，每个章节一个项目；创建系列清单 |
+| > 阈值，且没有可用标题 | `chunked` | 按段落/句子边界切成不超过 `maxUnitChars` 的块 |
+| 单个章节仍超过 `maxUnitChars` | `chunked` | 该章节继续切块，并标记为 chunk 单元 |
+
+规则：
+
+- `source/script.md` 永远只保存**当前工作单元**，不是整本书；
+- 完整单元清单写入 `source/plan.json`，单元文本写入 `.automanga/series/<id>/units/`；
+- 新项目会记录 `source.strategy / unitId / unitIndex / totalUnits` 和 `series`；
+- 非交互模式默认选择第一个单元；交互模式会列出单元让用户选择；
+- 后续用 `/manga units` 查看计划，`/manga next-unit` 创建或切换到下一单元；`/manga auto-run` 会自动完成所有剩余单元；
+- 旧项目（升级前已把整本书写进 `source/script.md`）可用 `/manga split-source` 原地切分，完整原文备份为 `source/script.full.md`；
+- 每个单元是独立项目，失败/重跑不会影响其他章节，Web、QA、导出也按单元隔离。
+
+`script_analyst` 只分析当前单元，并必须填写 `analysis.scope`（首句/末句原文）；流水线会校验 `lastQuote` 是否真的落在单元结尾，防止“只读了前 50 KB 就保存成功”。
 
 典型流程：
 
@@ -92,7 +116,7 @@ init
  → [final_gate] → done
 ```
 
-方括号为人工闸门。`/manga auto on` 可跳过闸门（仍做校验），`/manga run-all` 跑到结束；`/manga auto-run` 等价于连续执行这两条命令。
+方括号为人工闸门。`/manga auto on` 可跳过闸门（仍做校验），`/manga run-all` 跑到当前项目结束；`/manga auto-run` 等价于连续执行这两条命令，并在长文/章节模式下**自动逐单元跑到整本结束**。
 
 视觉审阅 `review` 不属于 `next` / `run-all` / `auto-run` 的自动流程，只有显式运行 `/manga review`（或 `/manga run reviewer`）时才会触发。
 
@@ -102,11 +126,14 @@ init
 
 | 命令 | 作用 |
 |---|---|
-| `/manga init [--script <文件\|目录>] [--title <书名>] [--note <初始备注>] [--refs <图片\|目录>] [--ref-mode direct\|restyle] [--style <preset>] [--adaptation strict\|balanced\|free]` | 新建项目；无参数时进入交互；初始备注供剧本分析参考；`--refs` 导入角色参考图，`direct` 直接使用，`restyle` 跟随画风重绘 |
+| `/manga init [--script <文件\|目录>] [--unit <序号\|id\|标题>] [--title <书名>] [--note <初始备注>] [--refs <图片\|目录>] [--ref-mode direct\|restyle] [--style <preset>] [--adaptation strict\|balanced\|free]` | 新建项目；无参数时进入交互；长剧本自动切分并默认选择第一个单元；初始备注供剧本分析参考；`--refs` 导入角色参考图，`direct` 直接使用，`restyle` 跟随画风重绘 |
+| `/manga units` | 查看当前系列的章节/分块清单与对应项目 |
+| `/manga next-unit [序号\|id]` | 创建或切换到下一个工作单元；已完成/已创建的单元会直接打开 |
+| `/manga split-source [序号\|id]` | 迁移旧项目：把整本 `source/script.md` 切成单元并切换；原文件备份为 `source/script.full.md` |
 | `/manga status` | 阶段、页/格、闸门、当前绘制模型、Web 地址 |
 | `/manga next` / `/manga step` | 后台推进下一阶段 |
 | `/manga run-all` | 后台跑完剩余流程（遇到闸门会停） |
-| `/manga auto-run` | 开启全自动并后台跑完剩余流程（= `auto on` + `run-all`） |
+| `/manga auto-run` | 开启全自动并后台跑完剩余流程；`chaptered/chunked` 项目会逐单元自动推进直到整本完成 |
 | `/manga run <role>` | 运行指定角色（`script_analyst` / `director` / `storyboard` / `editor` / `repairer` / `reviewer`） |
 | `/manga approve [意见]` | 通过当前闸门并继续 |
 | `/manga revise <意见>` | 按意见重做当前闸门产物 |
@@ -157,7 +184,10 @@ init
 ```
 project.json              标题、画风、比例、尺寸、改编等级、闸门
 state.json                阶段、闸门、运行记录、统计
-source/script.md          用户剧本（目录输入已合并，带 `# ===== 文件 =====` 分隔）
+source/script.md          当前工作单元（single 模式为完整剧本；长文模式只含当前单元）
+source/plan.json          源文本策略、单元清单与阈值
+source/units/unit-XXX.md  当前单元副本（长文模式）
+source/inputs.json        原始输入路径、是否目录、文件清单、策略、所选单元、初始备注、参考图记录
 source/inputs.json        原始输入路径、是否目录、文件清单、初始备注、参考图记录
 source/user-note.md       用户初始备注（仅非空时创建，剧本分析参考）
 source/character-refs/    用户角色参考图与 manifest.json（仅导入时创建）
@@ -174,6 +204,8 @@ qa/review.json             AI 审阅汇总（含未解决格子）
 qa/review-report.md        最简问题报告（不打印到对话）
 .runs/<runId>/            每次角色运行的 prompt 快照与产物快照
 .web/<相对路径>.png        Web 压缩预览缓存（每张 <500 KB，不修改原图）
+.automanga/series/<id>.json  系列清单：输入路径、策略、单元与对应项目
+.automanga/series/<id>/units/  每个单元的原文副本
 exports/<slug>.zip        默认：仅图片的普通 ZIP
 exports/<slug>.cbz        可选：漫画 CBZ
 ```
@@ -283,7 +315,8 @@ Key 不会写入项目目录、不会进入角色提示词、日志中会脱敏�
   "agents": { "thinkingLevel": "medium", "maxAttempts": 2 },
   "gates": { "script": "auto", "cast": "always", "storyboard": "always", "final": "always" },
   "web": { "host": "0.0.0.0", "port": 45871, "open": true },
-  "qa": { "vision": false, "repairRounds": 1 }
+  "qa": { "vision": false, "repairRounds": 1 },
+  "source": { "maxUnitChars": 60000, "splitThresholdChars": 60000, "maxStoryboardPagesPerUnit": 40, "maxInputBytes": 67108864 }
 }
 ```
 
@@ -359,4 +392,5 @@ node --experimental-strip-types --test tests/*.test.ts   # 70 个用例
 - 视觉审阅需要手动运行 `/manga review`，不会在流水线中自动插入；审阅按页批量读取图片，页数很多时会产生额外 token 与耗时。
 - 不支持并行出图（按需求严格串行）。
 - 换画风会让立绘、提示词与画面全部失效，需要重跑。
+- 长剧本按“一个单元一个项目”组织；`next-unit` 会把上一单元的 `bible.json` 复制为 `bible.previous.json` 并带上立绘，导演会优先复用已有角色，但跨章节角色合并仍是尽力而为。
 - Web 预览压缩只处理 PNG；direct 模式导入的 JPEG/WebP 原图直接返回，不做重编码。

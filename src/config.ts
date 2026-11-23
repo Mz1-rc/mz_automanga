@@ -11,6 +11,7 @@ import type {
 	MangaProject,
 	MemoryConfig,
 	QaConfig,
+	SourceConfig,
 	StylePreset,
 	StyleSelection,
 	WebConfig,
@@ -64,6 +65,18 @@ export const DEFAULT_MEMORY: MemoryConfig = {
 	zipChunkBytes: 1024 * 1024,
 };
 
+/**
+ * Long-script policy. A unit must stay small enough that analyst / director /
+ * storyboard can read it in full; above the threshold the input is split into
+ * chapters (when headings exist) or size-bounded chunks.
+ */
+export const DEFAULT_SOURCE: SourceConfig = {
+	maxUnitChars: 60_000,
+	splitThresholdChars: 60_000,
+	maxStoryboardPagesPerUnit: 40,
+	maxInputBytes: 64 * 1024 * 1024,
+};
+
 export const DEFAULT_PROVIDERS: NonNullable<MangaConfig["providers"]> = {
 	agnes: {
 		baseUrl: "https://apihub.agnes-ai.com/v1",
@@ -95,6 +108,7 @@ export const DEFAULT_CONFIG: MangaConfig = {
 	web: DEFAULT_WEB,
 	qa: DEFAULT_QA,
 	memory: DEFAULT_MEMORY,
+	source: DEFAULT_SOURCE,
 };
 
 export function deepMerge<T>(base: T, patch: unknown): T {
@@ -145,6 +159,28 @@ export function normalizeConfig(config: MangaConfig): MangaConfig {
 	config.memory.webCacheBytes = clamp(config.memory.webCacheBytes, 256 * 1024, 32 * 1024, 4 * 1024 * 1024);
 	config.memory.previewChars = clamp(config.memory.previewChars, 160, 40, 800);
 	config.memory.zipChunkBytes = clamp(config.memory.zipChunkBytes, 1024 * 1024, 64 * 1024, 8 * 1024 * 1024);
+	if (!config.source || typeof config.source !== "object" || Array.isArray(config.source)) {
+		config.source = { ...DEFAULT_SOURCE };
+	}
+	config.source.maxUnitChars = clamp(config.source.maxUnitChars, DEFAULT_SOURCE.maxUnitChars, 4_000, 200_000);
+	config.source.splitThresholdChars = clamp(
+		config.source.splitThresholdChars,
+		DEFAULT_SOURCE.splitThresholdChars,
+		1_000,
+		2_000_000,
+	);
+	config.source.maxStoryboardPagesPerUnit = clamp(
+		config.source.maxStoryboardPagesPerUnit,
+		DEFAULT_SOURCE.maxStoryboardPagesPerUnit,
+		1,
+		200,
+	);
+	config.source.maxInputBytes = clamp(
+		config.source.maxInputBytes,
+		DEFAULT_SOURCE.maxInputBytes,
+		1024 * 1024,
+		512 * 1024 * 1024,
+	);
 	const port = Number(config.web.port);
 	config.web.port = Number.isInteger(port) && port >= 0 && port <= 65535 ? port : 0;
 	if (!config.agents.overrides || typeof config.agents.overrides !== "object") config.agents.overrides = {};
@@ -237,4 +273,8 @@ export function workspaceRoot(cwd: string, config: MangaConfig): string {
 
 export function projectsRoot(cwd: string, config: MangaConfig): string {
 	return join(workspaceRoot(cwd, config), "projects");
+}
+
+export function seriesRoot(cwd: string, config: MangaConfig): string {
+	return join(workspaceRoot(cwd, config), "series");
 }

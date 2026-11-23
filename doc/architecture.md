@@ -467,8 +467,8 @@ mz_automanga/
 
 | 顺序 | 阶段 | 执行者 | 输入 | 输出 | 校验 |
 |---|---|---|---|---|---|
-| 0 | `ingest` | 代码 | 剧本文件或目录 | `source/script.md`（目录递归合并，带文件名分隔） | 非空、hash、文件清单 |
-| 1 | `script_analysis` | `script_analyst` | script | `analysis.json`、`scenes.json` | TypeBox；scenes ≥1；issue 必须有 options/assumption |
+| 0 | `ingest` | 代码 | 剧本文件或目录 | `source/plan.json`、`source/script.md`（当前单元）、系列单元副本 | 非空、hash、文件清单；超过阈值自动切章节/分块 |
+| 1 | `script_analysis` | `script_analyst` | 当前单元 script | `analysis.json`、`scenes.json` | TypeBox；scenes ≥1；analysis.scope 首末句覆盖校验；issue 必须有 options/assumption |
 | 2 | `script_gate` | 宿主 UI | analysis | `clarifications.md` | 有 blocker/major 才进入 |
 | 3 | `design` | `director` | script + analysis + clarifications + style | `bible.json`（含 `refPrompt`） | cast ≥1；每个角色有 canonical/refPrompt；stylePrompt 含 lockedTokens |
 | 4 | `character_images` | 代码 | refPrompt | `characters/<id>/ref.png` | PNG magic、尺寸、hash |
