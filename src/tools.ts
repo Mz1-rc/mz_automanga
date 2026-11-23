@@ -20,6 +20,7 @@ import {
 	actionProvider,
 	actionQa,
 	actionRegen,
+	actionReview,
 	actionResume,
 	actionRevise,
 	actionRollback,
@@ -50,6 +51,7 @@ const ACTIONS = [
 	"prompt_panel",
 	"cast",
 	"qa",
+	"review",
 	"style",
 	"provider",
 	"configure",
@@ -69,7 +71,7 @@ const ACTIONS = [
 const HELP = `manga_team 动作：
 init（支持 note / reference_path / reference_mode）
 status / next / step / run_all / auto_run / run_role / approve / revise
-web / web_stop / web_status / regen_panel / prompt_panel / cast / qa
+web / web_stop / web_status / regen_panel / prompt_panel / cast / qa / review
 style / provider / configure / set_auto / pause / resume / abort / doctor / open
 rollback / export / compress_images / list
 
@@ -204,6 +206,8 @@ export function registerMangaTool(pi: ExtensionAPI, app: MangaApp): void {
 					return text(actionCast(actionCtx, app, {}));
 				case "qa":
 					return text(actionQa(actionCtx, app));
+				case "review":
+					return text(actionReview(actionCtx, app));
 				case "style":
 					return text(await actionStyle(actionCtx, app, params.style));
 				case "provider":

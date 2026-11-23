@@ -87,11 +87,14 @@ init
  → [storyboard_gate]（出图前确认）
  → image_gen（逐格串行出图）
  → qa（结构/文字完整性）→ [repair]（可选 1 轮）
+ → [review]（可选：AI 视审，问题格自动重画，每格最多 3 次）
  → build（默认导出仅图片 ZIP，可选 CBZ）
  → [final_gate] → done
 ```
 
 方括号为人工闸门。`/manga auto on` 可跳过闸门（仍做校验），`/manga run-all` 跑到结束；`/manga auto-run` 等价于连续执行这两条命令。
+
+视觉审阅 `review` 不属于 `next` / `run-all` / `auto-run` 的自动流程，只有显式运行 `/manga review`（或 `/manga run reviewer`）时才会触发。
 
 分镜阶段会先用场景数、节拍数和原文篇幅生成全篇页计划：即使分析师把 `pageEstimate` 估得过高，也会收紧到内容能支撑的页数，并把每页限定到独立的节拍区间，避免后半段用“回响/重放/总结”页重复剧情。
 
@@ -104,7 +107,7 @@ init
 | `/manga next` / `/manga step` | 后台推进下一阶段 |
 | `/manga run-all` | 后台跑完剩余流程（遇到闸门会停） |
 | `/manga auto-run` | 开启全自动并后台跑完剩余流程（= `auto on` + `run-all`） |
-| `/manga run <role>` | 运行指定角色（`script_analyst` / `director` / `storyboard` / `editor` / `repairer`） |
+| `/manga run <role>` | 运行指定角色（`script_analyst` / `director` / `storyboard` / `editor` / `repairer` / `reviewer`） |
 | `/manga approve [意见]` | 通过当前闸门并继续 |
 | `/manga revise <意见>` | 按意见重做当前闸门产物 |
 | `/manga pause` / `/manga resume` / `/manga abort` | 暂停 / 恢复 / 中止 |
@@ -113,6 +116,7 @@ init
 | `/manga cast [--regen]` | 查看/重生成角色立绘 |
 | `/manga prompt <page-001/panel-01>` | 查看最终提示词 |
 | `/manga qa` | 重新结构审校 |
+| `/manga review` | AI 视觉审阅已生成画面：检查文字清晰/错字/气泡/角色/画风；有 blocker/major 问题的格子自动重画，每格最多 3 次；简短报告写入 `qa/review-report.md`（不在对话中展开） |
 | `/manga style [preset]` | 查看/切换画风（会重做立绘、提示词、画面） |
 | `/manga models [role] [provider/id]` | 逐角色设置模型 |
 | `/manga provider [id] [--model <model>]` | 切换绘制模型提供方：`agnes`（免费，默认）或 `ark`（火山方舟 Seedream，付费）；无 id 时交互选择提供方，切到 `ark` 时再交互选择模型 |
@@ -125,7 +129,7 @@ init
 | `/manga export [--cbz]` | 重新导出；默认仅图片普通 ZIP，`--cbz` 导出 CBZ |
 | `/manga compress` | 生成/刷新 Web 用 <500 KB 预览图 |
 
-角色 id：`script_analyst`、`director`、`storyboard`、`editor`、`repairer`。`director` 同时负责角色立绘提示词，`storyboard` 同时负责最终图像提示词与 lettering。
+角色 id：`script_analyst`、`director`、`storyboard`、`editor`、`repairer`、`reviewer`。`director` 同时负责角色立绘提示词，`storyboard` 同时负责最终图像提示词与 lettering，`reviewer` 只做视觉审阅与问题报告，不改页面。`reviewer` 需要支持图片输入的模型；可用 `/manga models reviewer <provider/id>` 单独指定。
 
 主 agent 也可以调用 `manga_team` 工具（`executionMode: "sequential"`，耗时动作后台启动后立即返回）。
 
@@ -165,6 +169,9 @@ characters/<id>/ref.prompt.txt
 pages/page-XXX.json       分镜 + 最终 prompt
 pages/page-XXX/panel-XX.png
 qa/report.json|md         审校报告
+qa/review/page-XXX.json   AI 视觉审阅的每页原始结果
+qa/review.json             AI 审阅汇总（含未解决格子）
+qa/review-report.md        最简问题报告（不打印到对话）
 .runs/<runId>/            每次角色运行的 prompt 快照与产物快照
 .web/<相对路径>.png        Web 压缩预览缓存（每张 <500 KB，不修改原图）
 exports/<slug>.zip        默认：仅图片的普通 ZIP
@@ -326,10 +333,10 @@ Ark 内置可选模型：`doubao-seedream-5-5-261028`（默认）、`doubao-seed
 ## 测试
 
 ```bash
-node --experimental-strip-types --test tests/*.test.ts   # 68 个用例
+node --experimental-strip-types --test tests/*.test.ts   # 70 个用例
 ```
 
-测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering/空镜校验、角色参考图导入与 direct/restyle（含非 PNG 参考图保留）、分镜参考图缺失/非法路径校验、改编等级与提示词注入、黑白画风颜色锁与灰度兜底、Agnes/Ark 重试与流式下载上限、图片压缩到 <500 KB、Web 只读方法白名单/默认 0.0.0.0/SSE/Range/中文路径/人设图/非 PNG 直出、ZIP/CBZ 导出、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过、图像模块 provider/workspace 解耦、Ark payload/尺寸映射、模型选择与状态显示、错误分层。
+测试使用假角色运行器与本地 mock Agnes，零网络、零费用。覆盖：状态迁移/锁、工件白名单与 schema、剧本分析/lettering/空镜校验、角色参考图导入与 direct/restyle（含非 PNG 参考图保留）、分镜参考图缺失/非法路径校验、改编等级与提示词注入、黑白画风颜色锁与灰度兜底、Agnes/Ark 重试与流式下载上限、图片压缩到 <500 KB、AI 视觉审阅与每格最多 3 次重画、Web 只读方法白名单/默认 0.0.0.0/SSE/Range/中文路径/人设图/非 PNG 直出、ZIP/CBZ 导出、完整流水线与缓存跳过、实时 token 回传与剧本闸门通过、图像模块 provider/workspace 解耦、Ark payload/尺寸映射、模型选择与状态显示、错误分层。
 
 ## 文档
 
@@ -348,8 +355,8 @@ node --experimental-strip-types --test tests/*.test.ts   # 68 个用例
 
 ## 已知限制
 
-- 图片中的中文由图像模型绘制，仍可能出现错字/糊字；用 `/manga regen` 重画单格，或缩短台词。
-- 视觉 QA 尚未实现（`qa.vision` 目前不生效，结构 QA 始终执行）。
+- 图片中的中文由图像模型绘制，仍可能出现错字/糊字；用 `/manga review` 自动审阅并重画问题格（每格最多 3 次），或 `/manga regen` 手动重画。
+- 视觉审阅需要手动运行 `/manga review`，不会在流水线中自动插入；审阅按页批量读取图片，页数很多时会产生额外 token 与耗时。
 - 不支持并行出图（按需求严格串行）。
 - 换画风会让立绘、提示词与画面全部失效，需要重跑。
 - Web 预览压缩只处理 PNG；direct 模式导入的 JPEG/WebP 原图直接返回，不做重编码。

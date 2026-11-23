@@ -11,6 +11,7 @@ export const ROLE_IDS = [
 	"storyboard",
 	"editor",
 	"repairer",
+	"reviewer",
 ] as const;
 
 export type RoleId = (typeof ROLE_IDS)[number];
@@ -432,6 +433,28 @@ export interface QaReport {
 	vision: { enabled: boolean; issues: QaIssue[] };
 	verdict: "pass" | "needs-repair";
 	repairTargets: string[];
+}
+
+/** One visual problem found by the reviewer role on a generated panel. */
+export interface ReviewIssue {
+	/** page-001/panel-01 */
+	panel: string;
+	severity: "minor" | "major" | "blocker";
+	/** text | bubble | character | style | artifact | other */
+	type: string;
+	/** Short Chinese description for the human report. */
+	message: string;
+	/** Optional English direction appended to the regeneration prompt. */
+	fix?: string;
+}
+
+/** JSON contract written by the reviewer for one page. */
+export interface ReviewReport {
+	schemaVersion: 1;
+	reviewedAt: string;
+	reviewed: string[];
+	issues: ReviewIssue[];
+	verdict: "pass" | "needs-regen";
 }
 
 /** ---- runtime ---- */

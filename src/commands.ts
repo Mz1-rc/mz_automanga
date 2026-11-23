@@ -20,6 +20,7 @@ import {
 	actionProvider,
 	actionQa,
 	actionRegen,
+	actionReview,
 	actionResume,
 	actionRevise,
 	actionRollback,
@@ -101,6 +102,7 @@ const HELP = `mz_automanga · 多 Agent 漫画流水线
   /manga cast [--regen]    查看/重生成角色立绘
   /manga prompt <page-001/panel-01>
   /manga qa                重新结构审校
+  /manga review            AI 视觉审阅已生成画面（问题格自动重画，最多 3 次）
   /manga style [preset]    查看/切换画风（会提示影响范围）
   /manga models [role] [provider/id]
   /manga provider [id] [--model <model>]  切换提供方；无 id 时交互选择，ark 会列出可选模型
@@ -215,6 +217,9 @@ export async function handleMangaCommand(
 			case "qa":
 				ctx.ui.notify(actionQa(ctx, app), "info");
 				return;
+			case "review":
+				ctx.ui.notify(actionReview(ctx, app), "info");
+				return;
 			case "style":
 				ctx.ui.notify(await actionStyle(ctx, app, rest || undefined), "info");
 				return;
@@ -278,6 +283,7 @@ export function registerMangaCommand(pi: ExtensionAPI, app: MangaApp): void {
 				"cast",
 				"prompt",
 				"qa",
+				"review",
 				"style",
 				"models",
 				"provider",

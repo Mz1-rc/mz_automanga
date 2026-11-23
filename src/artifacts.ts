@@ -319,6 +319,30 @@ export function validateRoleOutputs(ctx: RoleValidationContext): ValidationResul
 			}
 			break;
 		}
+		case "reviewer": {
+			const target = ctx.targets.find((item) => item.startsWith("qa/review/")) ?? ctx.targets[0];
+			const report = target ? readJson<Record<string, unknown>>(resolveWithin(ctx.projectRoot, target)) : undefined;
+			if (!report || typeof report !== "object") issues.push(`${target ?? "qa/review"} 不是对象`);
+			else {
+				if (!Array.isArray(report.issues)) issues.push(`${target} 缺少 issues 数组`);
+				else {
+					for (const [index, issue] of report.issues.entries()) {
+						const item = issue as Record<string, unknown>;
+						if (!item || typeof item !== "object") {
+							issues.push(`issues[${index}] 不是对象`);
+							continue;
+						}
+						if (!/^page-\d{3}\/panel-\d{2}$/.test(String(item.panel ?? ""))) {
+							issues.push(`issues[${index}].panel 必须是 page-XXX/panel-XX`);
+						}
+						if (!SEVERITIES.has(String(item.severity))) issues.push(`issues[${index}].severity 非法`);
+						if (!String(item.message ?? "").trim()) issues.push(`issues[${index}] 缺少 message`);
+					}
+				}
+				if (report.verdict !== "pass" && report.verdict !== "needs-regen") issues.push(`${target} 的 verdict 非法`);
+			}
+			break;
+		}
 		case "repairer": {
 			const page = ctx.page;
 			const bible = readJson<Bible>(resolveWithin(ctx.projectRoot, "bible.json"));
@@ -341,6 +365,8 @@ export function roleTargets(role: RoleId, options: { bible?: Bible; pageId?: str
 			return ["qa/report.json", "qa/report.md"];
 		case "repairer":
 			return (options.repairTargets ?? []).map((target) => `pages/${target.split("/")[0]}.json`);
+		case "reviewer":
+			return [];
 	}
 }
 

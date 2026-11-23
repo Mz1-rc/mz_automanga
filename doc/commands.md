@@ -25,6 +25,7 @@
 | `/manga cast [<id>] [--regen]` | 查看/重生成角色立绘（可只重生成一个） |
 | `/manga prompt <page> <panel>` | 打印最终提示词与参考图 |
 | `/manga qa` | 重新运行结构 QA |
+| `/manga review` | AI 视觉审阅已生成画面：逐页读取格子图片，检查文字清晰/错字/气泡/角色/画风；blocker/major 问题格自动重画，每格最多 3 次；最简报告写入 `qa/review-report.md`，不在对话中展开 |
 | `/manga models` | 逐角色设置模型与 thinking level |
 | `/manga provider [id] [--model <model>]` | 切换图像模型提供方：`agnes`（免费默认）/ `ark`（付费）；无 id 时交互选择，切换 `ark` 时再选 Seedream 模型 |
 | `/manga config` | 查看有效配置 |
@@ -64,7 +65,7 @@ pi.registerTool({
 });
 ```
 
-Actions：`init | next | step | run_role | approve | revise | status | web | regen_panel | style | provider | configure | abort | doctor | open | export | compress_images | run_all | auto_run | set_auto`。`export_format` 默认为 `zip`，可设为 `cbz`。
+Actions：`init | next | step | run_role | approve | revise | status | web | regen_panel | style | provider | configure | abort | doctor | open | export | compress_images | run_all | auto_run | set_auto | qa | review`。`export_format` 默认为 `zip`，可设为 `cbz`。
 
 ### 10.3 后台任务（单飞）
 

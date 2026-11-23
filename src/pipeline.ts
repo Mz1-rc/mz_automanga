@@ -24,6 +24,8 @@ import type {
 	Phase,
 	ProgressUpdate,
 	QaReport,
+	ReviewIssue,
+	ReviewReport,
 	RoleId,
 	RoleRunOptions,
 	RoleRunResult,
@@ -34,6 +36,9 @@ import type {
 import { ADAPTATION_INFO, ADAPTATION_LEVELS, ROLE_IDS } from "./types.ts";
 
 export type RoleRunner = (options: RoleRunOptions) => Promise<RoleRunResult>;
+
+/** Maximum number of automatic panel regenerations per panel during one review. */
+export const MAX_REVIEW_REGENERATIONS = 3;
 
 export interface PipelineUi extends GateUi {
 	updateStatus(store: ProjectStore, status?: RunStatus, activeUsage?: RunUsage): void;
@@ -773,6 +778,131 @@ export class MangaPipeline {
 		});
 	}
 
+	/**
+	 * Visual review of generated panels by the reviewer role.
+	 *
+	 * Reviews page by page so each nested session only carries a few images.
+	 * Panels with a blocker/major issue are regenerated; each panel is
+	 * regenerated at most MAX_REVIEW_REGENERATIONS times. The concise human
+	 * report is written to qa/review-report.md and is not printed in chat.
+	 */
+	async reviewImages(): Promise<void> {
+		this.beginStage("AI 视觉审阅", "视觉审阅");
+		await this.locked("reviewer", async () => {
+			const pages = this.store
+				.listPageKeys()
+				.map((key) => ({ key, page: this.store.readPageByKey(key) }))
+				.filter((entry): entry is { key: string; page: MangaPage } =>
+					Boolean(
+						entry.page?.panels.some(
+							(panel) => panel.image?.file && fileExists(resolveWithin(this.store.root, panel.image.file)),
+						),
+					),
+				);
+			if (pages.length === 0) {
+				this.ui.notify("还没有可审阅的画面。请先完成出图，再运行 /manga review。", "warning");
+				this.ui.updateStatus(this.store);
+				return;
+			}
+
+			const issues = new Map<string, ReviewIssue>();
+			const attempts = new Map<string, number>();
+			const reviewed = new Set<string>();
+			const regenerated = new Set<string>();
+			let rounds = 0;
+			let affected = new Set(pages.map((entry) => entry.key));
+
+			for (let round = 1; round <= MAX_REVIEW_REGENERATIONS + 1; round++) {
+				if (this.signal?.aborted) throw new Error("已取消");
+				const active = pages.filter((entry) => affected.has(entry.key));
+				if (active.length === 0) break;
+				rounds = round;
+				for (const [index, entry] of active.entries()) {
+					if (this.signal?.aborted) throw new Error("已取消");
+					const pageId = entry.key;
+					const target = `qa/review/${pageId}.json`;
+					this.report(`第 ${round} 轮审阅 ${pageId}（${index + 1}/${active.length}）`, {
+						step: index + 1,
+						total: active.length,
+					});
+					const result = await this.runRoleWithRetry("reviewer", {
+						pageIndex: entry.page.index,
+						pageId,
+						targets: [target],
+					});
+					if (!result.ok) throw new Error(`视觉审阅输出未通过校验：${result.issues.join("；")}`);
+					const report = readJson<ReviewReport>(resolveWithin(this.store.root, target));
+					for (const key of [...issues.keys()]) {
+						if (key.startsWith(`${pageId}/`)) issues.delete(key);
+					}
+					for (const issue of report?.issues ?? []) {
+						const key = normalizeReviewPanel(issue.panel, pageId);
+						if (key) issues.set(key, { ...issue, panel: key });
+					}
+					for (const panel of entry.page.panels) {
+						if (panel.image?.file && fileExists(resolveWithin(this.store.root, panel.image.file))) {
+							reviewed.add(`${pageId}/${panel.id}`);
+						}
+					}
+				}
+
+				if (round > MAX_REVIEW_REGENERATIONS) break;
+				const actionable = [...issues.entries()]
+					.filter(([key, issue]) => issue.severity !== "minor" && (attempts.get(key) ?? 0) < MAX_REVIEW_REGENERATIONS)
+					.filter(([key]) => this.panelHasImage(key));
+				if (actionable.length === 0) break;
+
+				affected = new Set();
+				for (const [key, issue] of actionable) {
+					if (this.signal?.aborted) throw new Error("已取消");
+					const attempt = (attempts.get(key) ?? 0) + 1;
+					attempts.set(key, attempt);
+					this.report(`重画 ${key}（第 ${attempt}/${MAX_REVIEW_REGENERATIONS} 次）`);
+					try {
+						await regeneratePanel({
+							workspace: createProjectImageWorkspace(this.store),
+							config: this.config.image,
+							provider: this.getClient(),
+							key,
+							note: reviewFixNote(issue),
+							signal: this.signal,
+						});
+						regenerated.add(key);
+						affected.add(key.split("/")[0]);
+					} catch (error) {
+						if (error instanceof ImageGenError && (error.code === "auth" || error.code === "aborted")) throw error;
+						this.ui.notify(`重画 ${key} 失败：${messageOf(error)}`, "warning");
+					}
+				}
+			}
+
+			const sortedIssues = [...issues.values()].sort((a, b) => a.panel.localeCompare(b.panel));
+			const summary: ReviewSummary = {
+				schemaVersion: 1,
+				generatedAt: nowIso(),
+				rounds,
+				reviewed: [...reviewed].sort(),
+				regenerated: [...regenerated].sort(),
+				issues: sortedIssues,
+				verdict: sortedIssues.length > 0 ? "needs-attention" : "pass",
+			};
+			ensureDir(join(this.store.root, "qa"));
+			writeJsonAtomic(join(this.store.root, "qa", "review.json"), summary);
+			writeAtomic(join(this.store.root, "qa", "review-report.md"), renderReviewMarkdown(summary));
+			this.ui.notify(
+				`AI 视觉审阅完成：${rounds} 轮，重画 ${regenerated.size} 格，剩余 ${sortedIssues.length} 个问题。报告已写入 qa/review-report.md。`,
+				sortedIssues.length ? "warning" : "info",
+			);
+			this.ui.updateStatus(this.store);
+		});
+	}
+
+	private panelHasImage(key: string): boolean {
+		const [pageId, panelId] = key.split("/");
+		const panel = this.store.readPageByKey(pageId)?.panels.find((item) => item.id === panelId);
+		return Boolean(panel?.image?.file && fileExists(resolveWithin(this.store.root, panel.image.file)));
+	}
+
 	async exportNow(format: ImageArchiveFormat = "zip"): Promise<void> {
 		this.beginStage(`导出 ${format.toUpperCase()}`);
 		await this.locked("code", async () => {
@@ -888,6 +1018,8 @@ export class MangaPipeline {
 				return this.runQa();
 			case "repairer":
 				return this.runRepair();
+			case "reviewer":
+				return this.reviewImages();
 		}
 	}
 
@@ -1009,6 +1141,14 @@ export class MangaPipeline {
 				return ["bible.json", ...(pageId ? [`pages/${pageId}.json`] : [])];
 			case "editor":
 				return ["bible.json", ...this.store.listPageKeys().map((key) => `pages/${key}.json`)];
+			case "reviewer": {
+				const page = pageId ? this.store.readPageByKey(pageId) : undefined;
+				return [
+					"bible.json",
+					...(pageId ? [`pages/${pageId}.json`] : []),
+					...(page?.panels.map((panel) => panel.image?.file).filter((file): file is string => Boolean(file)) ?? []),
+				];
+			}
 		}
 	}
 
@@ -1177,6 +1317,8 @@ export function roleLabel(role: RoleId): string {
 			return "审校";
 		case "repairer":
 			return "修复师";
+		case "reviewer":
+			return "视觉审阅";
 	}
 }
 
@@ -1233,6 +1375,45 @@ function renderQaMarkdown(report: QaReport): string {
 		"",
 	];
 	return lines.join("\n");
+}
+
+export interface ReviewSummary {
+	schemaVersion: 1;
+	generatedAt: string;
+	rounds: number;
+	reviewed: string[];
+	regenerated: string[];
+	issues: ReviewIssue[];
+	verdict: "pass" | "needs-attention";
+}
+
+function normalizeReviewPanel(value: unknown, pageId: string): string | undefined {
+	const text = String(value ?? "").trim().replaceAll("\\", "/");
+	if (/^page-\d{3}\/panel-\d{2}$/.test(text)) return text;
+	const match = /^panel-(\d{2})$/.exec(text);
+	return match ? `${pageId}/panel-${match[1]}` : undefined;
+}
+
+function reviewFixNote(issue: ReviewIssue): string {
+	const fix = issue.fix?.trim() || `Fix the visual issue: ${issue.message}`;
+	return `${fix}. Keep all specified lettering text unchanged, clearly readable, and inside its bubble.`;
+}
+
+function renderReviewMarkdown(summary: ReviewSummary): string {
+	const lines = [
+		"# AI 审阅报告",
+		"",
+		`- 结论：${summary.issues.length ? `仍有 ${summary.issues.length} 个问题` : "通过"}`,
+		`- 审阅：${summary.rounds} 次 · 格子：${summary.reviewed.length} · 重画：${summary.regenerated.length} 格（每格上限 3 次）`,
+		"- 问题：",
+	];
+	if (summary.issues.length === 0) lines.push("- 无");
+	else {
+		for (const issue of summary.issues) {
+			lines.push(`- ${issue.panel} [${issue.severity}] ${issue.type}：${issue.message}`);
+		}
+	}
+	return `${lines.join("\n")}\n`;
 }
 
 /** Exposed for tests / status output. */

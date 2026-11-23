@@ -92,6 +92,8 @@ prompt 开头用英文逐条说明每张参考图的作用；refs 顺序与说�
 
 `prompts/editor.md` / `prompts/repairer.md`：只读校验、只改被标记格子。
 
+`prompts/reviewer.md`：读取已生成的格子图片做视觉审阅，只写 `qa/review/page-XXX.json`，由代码决定重画与 3 次上限。
+
 ---
 
 ## 附录 B：Agnes 请求示例

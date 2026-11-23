@@ -23,6 +23,7 @@
 | `export.test.ts` | 默认 ZIP/CBZ 条目、顺序、EOCD |
 | `compress.test.ts` | PNG 解码/下采样/压缩到 ≤500,000 字节、`.web` 缓存复用 |
 | `pipeline.e2e.test.ts` | `FakeRoleRunner` + 本地 HTTP mock 全流程；缓存跳过；剧本闸门“按假设继续” |
+| `review.test.ts` | `/manga review` 的视觉审阅：任务列出图片与预期台词；问题格重画后复核；每格最多 3 次；简明报告只写文件 |
 
 `FakeRoleRunner` 通过 `MangaPipeline` 构造参数注入，不启动真实会话；真实模型冒烟测试由临时驱动脚本完成（未纳入仓库）。
 

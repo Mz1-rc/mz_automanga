@@ -277,10 +277,13 @@ garbled characters, misspelled characters, extra text, watermark, signature, blu
 ```
 ingest → script_analyst → [script_gate] → director（含角色立绘提示词）
       → character_images → [cast_gate] → storyboard（含最终提示词/lettering）
-      → [storyboard_gate] → images → qa → [repair] → build → [final_gate] → export
+      → [storyboard_gate] → images → qa → [repair]
+      → [review（可选视觉审阅 + 问题格重画）] → build → [final_gate] → export
 ```
 
 方括号为闸门（人工确认）。`images`、`build`、`character_images` 是代码阶段，其余是角色阶段。
+
+`review` 是命令触发的手动步骤，不在 `next` / `run-all` / `auto-run` 的状态机里自动执行；未运行 `/manga review` 时流程与之前完全一致。
 
 ---
 
@@ -360,7 +363,8 @@ mz_automanga/
 │   ├── director.md               # 企划 + 角色立绘提示词
 │   ├── storyboard.md             # 分镜 + 最终提示词 / lettering
 │   ├── editor.md
-│   └── repairer.md
+│   ├── repairer.md
+│   └── reviewer.md               # 视觉审阅（文字清晰度/气泡/角色/画风）
 ├── tests/
 │   ├── helpers.ts
 │   ├── state.test.ts
@@ -455,6 +459,7 @@ mz_automanga/
 | `storyboard` | 分镜师（含提示词/lettering） | `pages/page-XXX.json`（含 prompt/lettering） | read, save_artifact | `storyboard` |
 | `editor` | 审校（v0.2 预留） | `qa/report.json`、`qa/report.md` | read, save_artifact | `qa`（v0.1 由代码审校） |
 | `repairer` | 修复师 | 被标记的 `pages/page-XXX.json` | read, save_artifact | `repair` |
+| `reviewer` | 视觉审阅 | `qa/review/page-XXX.json` | read（含图片）, save_artifact | 手动 `/manga review`（不改变阶段） |
 
 代码阶段（不启动会话）：`ingest`（复制剧本 + hash）、`character_images`（角色立绘出图）、`images`（分镜格出图）、`build`（索引 + 统计 + CBZ）。
 
@@ -473,6 +478,7 @@ mz_automanga/
 | 8 | `image_gen` | 代码 | page | PNG | cacheKey、PNG/JPEG、尺寸 |
 | 9 | `qa` | 代码 + 可选 `editor` | 全部 | `qa/report.json` | 结构 + 视觉 |
 | 10 | `repair` | `repairer`（可选 1 轮） | qa + page | 更新目标 page | 只允许改 repairTargets |
+| 10.5 | `review` | `reviewer`（手动） | 已出图 page | `qa/review/page-XXX.json` | 只读图片；每格最多重画 3 次 |
 | 11 | `build` | 代码 | 全部 | index、默认仅图片 ZIP | 文件齐全 |
 | 12 | `final_gate` | 宿主 UI | 统计 + 预览 | 闸门记录 | 交付确认 |
 | 13 | `export` | 代码 | — | `exports/<slug>.zip`（默认）或 `.cbz` | zip 结构 |

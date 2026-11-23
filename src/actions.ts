@@ -584,6 +584,16 @@ export function actionQa(ctx: ActionCtx, app: AppLike): string {
 	return startBackground(ctx, app, "结构审校", (pipeline) => pipeline.runQa());
 }
 
+/** AI visual review of generated images; regenerates failing panels (max 3 attempts each). */
+export function actionReview(ctx: ActionCtx, app: AppLike): string {
+	const { store } = app.ensure(ctx.cwd);
+	const stats = store.refreshStats();
+	if (stats.images === 0) {
+		throw new Error("还没有可审阅的画面。请先完成出图，再运行 /manga review。");
+	}
+	return startBackground(ctx, app, "AI 视觉审阅", (pipeline) => pipeline.reviewImages());
+}
+
 function setAutoGates(store: ProjectStore, on: boolean): void {
 	store.project.gates = on
 		? { script: "off", cast: "off", storyboard: "off", final: "off" }

@@ -302,4 +302,31 @@ idle | intake | script_analysis | script_gate | design | cast | cast_gate
 }
 ```
 
+### 5.7 `qa/review.json` 与 `qa/review-report.md`
+
+`/manga review` 先写每页的 `qa/review/page-XXX.json`（reviewer 的原始输出），再汇总为
+`qa/review.json`。`qa/review-report.md` 是给人看的最简问题报告，只列剩余问题，不打印到对话。
+
+```json
+{
+  "schemaVersion": 1,
+  "generatedAt": "…",
+  "rounds": 2,
+  "reviewed": ["page-001/panel-01", "page-001/panel-02"],
+  "regenerated": ["page-001/panel-02"],
+  "issues": [
+    {
+      "panel": "page-001/panel-02",
+      "severity": "major",
+      "type": "text",
+      "message": "气泡内文字糊成一团，无法辨认",
+      "fix": "redraw the speech bubble with larger, clear Simplified Chinese lettering"
+    }
+  ],
+  "verdict": "needs-attention"
+}
+```
+
+`regenerated` 只记录实际成功重画的格子；每个问题格最多重画 3 次，之后即使仍有问题也只写报告。
+
 ---
